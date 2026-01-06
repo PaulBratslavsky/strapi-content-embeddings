@@ -1,6 +1,6 @@
 {
   "kind": "collectionType",
-  "collectionName": "embedding",
+  "collectionName": "strapi_content_embeddings",
   "info": {
     "singularName": "embedding",
     "pluralName": "embeddings",
