@@ -40,7 +40,7 @@ export async function handleRagQuery(
       .service('embeddings');
 
     // Perform RAG query
-    const result = await embeddingsService.queryEmbeddings({ query });
+    const result = await embeddingsService.queryEmbeddings(query);
 
     // Format response
     const response: any = {
