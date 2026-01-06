@@ -276,10 +276,21 @@ class PluginManager {
         this.vectorStoreConfig
       );
 
-      const retriever = vectorStore.asRetriever({ k: 4 });
+      // Use similaritySearchWithScore to get relevance scores
+      // Retrieve more documents initially, then filter by score
+      const resultsWithScores = await vectorStore.similaritySearchWithScore(query, 6);
 
-      // Retrieve source documents
-      const sourceDocuments = await retriever.invoke(query);
+      // Filter by similarity threshold (cosine similarity: 0 = identical, 2 = opposite)
+      // Keep only documents with score < 0.5 (more similar)
+      const SIMILARITY_THRESHOLD = 0.5;
+      const relevantResults = resultsWithScores.filter(([_, score]) => score < SIMILARITY_THRESHOLD);
+
+      // Take top 3 most relevant documents for context
+      const topResults = relevantResults.slice(0, 3);
+      const sourceDocuments = topResults.map(([doc]) => doc);
+
+      // Only show the single best matching source to the user
+      const bestMatchForDisplay = topResults.length > 0 ? [topResults[0][0]] : [];
 
       // Format documents for context - include title from metadata
       const formatDocs = (docs: Document[]): string => {
@@ -302,7 +313,7 @@ Context:
         ["human", "{question}"],
       ]);
 
-      // Build LCEL chain
+      // Build LCEL chain - use all relevant docs for context
       const ragChain = RunnableSequence.from([
         {
           context: async () => formatDocs(sourceDocuments),
@@ -317,7 +328,7 @@ Context:
 
       return {
         text,
-        sourceDocuments,
+        sourceDocuments: bestMatchForDisplay, // Only return best match to display
       };
     } catch (error) {
       console.error(`Failed to query embeddings: ${error}`);
