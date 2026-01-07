@@ -361,6 +361,68 @@ Context:
     return !!(this.embeddings && this.chat && this.pool);
   }
 
+  /**
+   * Get all embeddings from Neon DB
+   * Returns the metadata (including Strapi documentId) for each embedding
+   */
+  async getAllNeonEmbeddings(): Promise<Array<{
+    id: string;
+    strapiId: string;
+    title: string;
+    content: string;
+    collectionType: string;
+    fieldName: string;
+  }>> {
+    if (!this.pool) {
+      throw new Error("Plugin manager not initialized");
+    }
+
+    try {
+      const result = await this.pool.query(`
+        SELECT
+          id,
+          content,
+          metadata->>'id' as strapi_id,
+          metadata->>'title' as title,
+          metadata->>'collectionType' as collection_type,
+          metadata->>'fieldName' as field_name
+        FROM embeddings_documents
+        ORDER BY id
+      `);
+
+      return result.rows.map((row) => ({
+        id: row.id,
+        strapiId: row.strapi_id,
+        title: row.title || '',
+        content: row.content || '',
+        collectionType: row.collection_type || 'standalone',
+        fieldName: row.field_name || 'content',
+      }));
+    } catch (error) {
+      console.error(`Failed to get Neon embeddings: ${error}`);
+      throw new Error(`Failed to get Neon embeddings: ${error}`);
+    }
+  }
+
+  /**
+   * Delete an embedding from Neon by its Neon UUID (not Strapi ID)
+   */
+  async deleteNeonEmbeddingById(neonId: string): Promise<void> {
+    if (!this.pool) {
+      throw new Error("Plugin manager not initialized");
+    }
+
+    try {
+      await this.pool.query(
+        `DELETE FROM embeddings_documents WHERE id = $1`,
+        [neonId]
+      );
+    } catch (error) {
+      console.error(`Failed to delete Neon embedding: ${error}`);
+      throw new Error(`Failed to delete Neon embedding: ${error}`);
+    }
+  }
+
   async destroy(): Promise<void> {
     if (this.pool) {
       await this.pool.end();

@@ -96,6 +96,49 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
       ctx.throw(500, error.message || "Failed to query embeddings");
     }
   },
+
+  /**
+   * Sync embeddings from Neon DB to Strapi DB
+   * GET /api/strapi-content-embeddings/sync
+   *
+   * Query params:
+   * - removeOrphans: boolean (default: false) - Remove Strapi entries that don't exist in Neon
+   * - dryRun: boolean (default: false) - Preview changes without applying them
+   */
+  async syncFromNeon(ctx: any) {
+    try {
+      const { removeOrphans, dryRun } = ctx.query;
+
+      const result = await strapi
+        .plugin(PLUGIN_ID)
+        .service("sync")
+        .syncFromNeon({
+          removeOrphans: removeOrphans === "true",
+          dryRun: dryRun === "true",
+        });
+
+      ctx.body = result;
+    } catch (error: any) {
+      ctx.throw(500, error.message || "Failed to sync embeddings");
+    }
+  },
+
+  /**
+   * Get sync status - compare Neon and Strapi without making changes
+   * GET /api/strapi-content-embeddings/sync/status
+   */
+  async getSyncStatus(ctx: any) {
+    try {
+      const result = await strapi
+        .plugin(PLUGIN_ID)
+        .service("sync")
+        .getSyncStatus();
+
+      ctx.body = result;
+    } catch (error: any) {
+      ctx.throw(500, error.message || "Failed to get sync status");
+    }
+  },
 });
 
 export default controller;
