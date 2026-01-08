@@ -207,46 +207,57 @@ class PluginManager {
   }
 
   async createEmbedding(docData: EmbeddingDocument): Promise<CreateEmbeddingResult> {
-    if (!this.embeddings || !this.vectorStoreConfig) {
+    if (!this.embeddings || !this.vectorStoreConfig || !this.pool) {
       throw new Error("Plugin manager not initialized");
     }
 
-    try {
-      // Generate the embedding vector
-      const embeddingVector = await this.embeddings.embedQuery(docData.content);
+    const maxRetries = 3;
+    const retryDelay = 2000; // 2 seconds
 
-      const doc = new Document({
-        pageContent: docData.content,
-        metadata: {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Generate the embedding vector (single API call)
+        const embeddingVector = await this.embeddings.embedQuery(docData.content);
+
+        // Insert directly into DB with pre-computed embedding (no second API call)
+        const metadata = {
           id: docData.id,
           title: docData.title,
           collectionType: docData.collectionType || "standalone",
           fieldName: docData.fieldName || "content",
-        },
-      });
+        };
 
-      await PGVectorStore.fromDocuments(
-        [doc],
-        this.embeddings,
-        this.vectorStoreConfig
-      );
+        const vectorString = `[${embeddingVector.join(",")}]`;
 
-      // Get the ID of the inserted document
-      const result = await this.pool!.query(
-        `SELECT id FROM embeddings_documents
-         WHERE metadata->>'id' = $1
-         ORDER BY id DESC LIMIT 1`,
-        [docData.id]
-      );
+        const result = await this.pool.query(
+          `INSERT INTO embeddings_documents (content, metadata, embedding)
+           VALUES ($1, $2::jsonb, $3::vector)
+           RETURNING id`,
+          [docData.content, JSON.stringify(metadata), vectorString]
+        );
 
-      return {
-        embeddingId: result.rows[0]?.id || "",
-        embedding: embeddingVector,
-      };
-    } catch (error) {
-      console.error(`Failed to create embedding: ${error}`);
-      throw new Error(`Failed to create embedding: ${error}`);
+        return {
+          embeddingId: result.rows[0]?.id || "",
+          embedding: embeddingVector,
+        };
+      } catch (error: any) {
+        const isRateLimit = error.message?.includes("429") || error.message?.includes("rate");
+        const isLastAttempt = attempt === maxRetries;
+
+        if (isRateLimit && !isLastAttempt) {
+          console.log(`[createEmbedding] Rate limited, waiting ${retryDelay}ms before retry ${attempt + 1}/${maxRetries}...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+          continue;
+        }
+
+        console.error(`[createEmbedding] Failed (attempt ${attempt}/${maxRetries}):`, error.message || error);
+        if (isLastAttempt) {
+          throw new Error(`Failed to create embedding after ${maxRetries} attempts: ${error.message || error}`);
+        }
+      }
     }
+
+    throw new Error("Failed to create embedding: unexpected error");
   }
 
   async deleteEmbedding(strapiId: string): Promise<void> {
@@ -280,10 +291,18 @@ class PluginManager {
       // Retrieve more documents initially, then filter by score
       const resultsWithScores = await vectorStore.similaritySearchWithScore(query, 6);
 
-      // Filter by similarity threshold (cosine similarity: 0 = identical, 2 = opposite)
-      // Keep only documents with score < 0.5 (more similar)
-      const SIMILARITY_THRESHOLD = 0.5;
+      console.log(`[queryEmbedding] Query: "${query}"`);
+      console.log(`[queryEmbedding] Found ${resultsWithScores.length} results:`);
+      resultsWithScores.forEach(([doc, score], i) => {
+        console.log(`  ${i + 1}. Score: ${score.toFixed(4)}, Title: ${doc.metadata?.title || 'N/A'}`);
+      });
+
+      // Filter by similarity threshold (cosine distance: 0 = identical, higher = more different)
+      // Increase threshold to allow more results
+      const SIMILARITY_THRESHOLD = 1.0;
       const relevantResults = resultsWithScores.filter(([_, score]) => score < SIMILARITY_THRESHOLD);
+
+      console.log(`[queryEmbedding] ${relevantResults.length} results passed threshold (< ${SIMILARITY_THRESHOLD})`);
 
       // Take top 3 most relevant documents for context
       const topResults = relevantResults.slice(0, 3);
@@ -431,6 +450,72 @@ Context:
     this.embeddings = null;
     this.chat = null;
     this.vectorStoreConfig = null;
+  }
+
+  /**
+   * Clear all embeddings from Neon DB
+   * Returns the number of deleted rows
+   */
+  async clearAllNeonEmbeddings(): Promise<number> {
+    if (!this.pool) {
+      throw new Error("Plugin manager not initialized");
+    }
+
+    try {
+      const result = await this.pool.query(`
+        DELETE FROM embeddings_documents
+        RETURNING id
+      `);
+
+      console.log(`[clearAllNeonEmbeddings] Deleted ${result.rowCount} embeddings from Neon`);
+      return result.rowCount || 0;
+    } catch (error) {
+      console.error(`Failed to clear Neon embeddings: ${error}`);
+      throw new Error(`Failed to clear Neon embeddings: ${error}`);
+    }
+  }
+
+  /**
+   * Debug method to inspect raw data in Neon DB
+   */
+  async debugNeonEmbeddings(): Promise<Array<{
+    id: string;
+    content: string;
+    metadata: any;
+    metadataType: string;
+    hasEmbedding: boolean;
+    embeddingLength: number;
+  }>> {
+    if (!this.pool) {
+      throw new Error("Plugin manager not initialized");
+    }
+
+    try {
+      const result = await this.pool.query(`
+        SELECT
+          id,
+          content,
+          metadata,
+          pg_typeof(metadata) as metadata_type,
+          embedding IS NOT NULL as has_embedding,
+          CASE WHEN embedding IS NOT NULL THEN array_length(embedding::float[], 1) ELSE 0 END as embedding_length
+        FROM embeddings_documents
+        ORDER BY id
+        LIMIT 20
+      `);
+
+      return result.rows.map((row) => ({
+        id: row.id,
+        content: row.content?.substring(0, 200) + (row.content?.length > 200 ? '...' : ''),
+        metadata: row.metadata,
+        metadataType: row.metadata_type,
+        hasEmbedding: row.has_embedding,
+        embeddingLength: row.embedding_length || 0,
+      }));
+    } catch (error) {
+      console.error(`Failed to debug Neon embeddings: ${error}`);
+      throw new Error(`Failed to debug Neon embeddings: ${error}`);
+    }
   }
 }
 

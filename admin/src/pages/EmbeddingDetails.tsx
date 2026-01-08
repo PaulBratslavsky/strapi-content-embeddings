@@ -13,6 +13,7 @@ import {
   Field,
   TextInput,
   Textarea,
+  Badge,
 } from "@strapi/design-system";
 import { Trash, Pencil, Check, Cross } from "@strapi/icons";
 import { useFetchClient, Layouts, useNotification } from "@strapi/strapi/admin";
@@ -24,6 +25,25 @@ import { MarkdownEditor } from "../components/custom/MarkdownEditor";
 
 const StyledTypography = styled(Typography)`
   display: block;
+  margin-bottom: 1rem;
+`;
+
+const ChunkTab = styled.div<{ $isActive: boolean }>`
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  border-bottom: 2px solid ${({ $isActive }) => ($isActive ? '#4945ff' : 'transparent')};
+  color: ${({ $isActive }) => ($isActive ? '#4945ff' : 'inherit')};
+  font-weight: ${({ $isActive }) => ($isActive ? '600' : '400')};
+  white-space: nowrap;
+
+  &:hover {
+    color: #4945ff;
+  }
+`;
+
+const ChunkTabsContainer = styled(Flex)`
+  border-bottom: 1px solid #dcdce4;
+  overflow-x: auto;
   margin-bottom: 1rem;
 `;
 
@@ -43,7 +63,7 @@ interface MetadataProps {
   data: EmbeddingData;
 }
 
-function Metadata({ data }: MetadataProps) {
+function Metadata({ data }: Readonly<MetadataProps>) {
   const metadata = {
     id: data.documentId,
     title: data.title,
@@ -82,7 +102,7 @@ interface ConfirmDeleteProps {
   isLoading: boolean;
 }
 
-function ConfirmDeleteEmbedding({ onConfirm, isLoading }: ConfirmDeleteProps) {
+function ConfirmDeleteEmbedding({ onConfirm, isLoading }: Readonly<ConfirmDeleteProps>) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
@@ -127,6 +147,8 @@ export default function EmbeddingDetails() {
   const { toggleNotification } = useNotification();
 
   const [data, setData] = useState<EmbeddingData | null>(null);
+  const [chunks, setChunks] = useState<EmbeddingData[]>([]);
+  const [activeChunkIndex, setActiveChunkIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -137,17 +159,52 @@ export default function EmbeddingDetails() {
   const [editContent, setEditContent] = useState("");
   const [editMetadata, setEditMetadata] = useState("");
 
+  // Check if this is a chunked document
+  const isChunkedDocument = chunks.length > 1;
+  const activeChunk = isChunkedDocument ? chunks[activeChunkIndex] : data;
+
   useEffect(() => {
     async function fetchData() {
       if (!id) return;
       try {
+        // First fetch the main embedding
         const response = await get(`/${PLUGIN_ID}/embeddings/find/${id}`);
         const embeddingData = response.data as EmbeddingData;
         setData(embeddingData);
-        // Initialize edit form
-        setEditTitle(embeddingData.title || "");
-        setEditContent(embeddingData.content || "");
-        setEditMetadata(embeddingData.metadata ? JSON.stringify(embeddingData.metadata, null, 2) : "");
+
+        // Check if this is part of a chunked document and fetch related chunks
+        const chunksResponse = await get(`/${PLUGIN_ID}/embeddings/related-chunks/${id}`);
+        const relatedChunks = chunksResponse.data?.data || [];
+
+        if (relatedChunks.length > 1) {
+          // Sort chunks by chunkIndex
+          const sortedChunks = relatedChunks.sort((a: EmbeddingData, b: EmbeddingData) => {
+            const aIndex = (a.metadata as any)?.chunkIndex ?? 0;
+            const bIndex = (b.metadata as any)?.chunkIndex ?? 0;
+            return aIndex - bIndex;
+          });
+          setChunks(sortedChunks);
+
+          // Find the index of the current chunk
+          const currentIndex = sortedChunks.findIndex(
+            (chunk: EmbeddingData) => chunk.documentId === id
+          );
+          if (currentIndex >= 0) {
+            setActiveChunkIndex(currentIndex);
+          }
+
+          // Initialize edit form with first chunk
+          const firstChunk = sortedChunks[currentIndex >= 0 ? currentIndex : 0];
+          setEditTitle(firstChunk.title || "");
+          setEditContent(firstChunk.content || "");
+          setEditMetadata(firstChunk.metadata ? JSON.stringify(firstChunk.metadata, null, 2) : "");
+        } else {
+          setChunks([embeddingData]);
+          // Initialize edit form
+          setEditTitle(embeddingData.title || "");
+          setEditContent(embeddingData.content || "");
+          setEditMetadata(embeddingData.metadata ? JSON.stringify(embeddingData.metadata, null, 2) : "");
+        }
       } catch (error) {
         console.error("Failed to fetch embedding:", error);
       } finally {
@@ -157,11 +214,27 @@ export default function EmbeddingDetails() {
     fetchData();
   }, [id, get]);
 
+  // Update edit form when active chunk changes
+  useEffect(() => {
+    if (activeChunk && !isEditing) {
+      setEditTitle(activeChunk.title || "");
+      setEditContent(activeChunk.content || "");
+      setEditMetadata(activeChunk.metadata ? JSON.stringify(activeChunk.metadata, null, 2) : "");
+    }
+  }, [activeChunkIndex, activeChunk, isEditing]);
+
   const handleDelete = async () => {
-    if (!id || isDeleting) return;
+    if (!activeChunk || isDeleting) return;
     setIsDeleting(true);
     try {
-      await del(`/${PLUGIN_ID}/embeddings/delete-embedding/${id}`);
+      // If chunked document, delete all chunks
+      if (isChunkedDocument) {
+        for (const chunk of chunks) {
+          await del(`/${PLUGIN_ID}/embeddings/delete-embedding/${chunk.documentId}`);
+        }
+      } else {
+        await del(`/${PLUGIN_ID}/embeddings/delete-embedding/${activeChunk.documentId}`);
+      }
       navigate(`/plugins/${PLUGIN_ID}`);
     } catch (error) {
       console.error("Failed to delete embedding:", error);
@@ -170,20 +243,26 @@ export default function EmbeddingDetails() {
   };
 
   const handleStartEdit = () => {
-    if (data) {
-      setEditTitle(data.title || "");
-      setEditContent(data.content || "");
-      setEditMetadata(data.metadata ? JSON.stringify(data.metadata, null, 2) : "");
+    if (activeChunk) {
+      setEditTitle(activeChunk.title || "");
+      setEditContent(activeChunk.content || "");
+      setEditMetadata(activeChunk.metadata ? JSON.stringify(activeChunk.metadata, null, 2) : "");
     }
     setIsEditing(true);
   };
 
   const handleCancelEdit = () => {
     setIsEditing(false);
+    // Reset to current chunk values
+    if (activeChunk) {
+      setEditTitle(activeChunk.title || "");
+      setEditContent(activeChunk.content || "");
+      setEditMetadata(activeChunk.metadata ? JSON.stringify(activeChunk.metadata, null, 2) : "");
+    }
   };
 
   const handleSave = async () => {
-    if (!id || isSaving) return;
+    if (!activeChunk || isSaving) return;
 
     // Validate metadata JSON if provided
     let parsedMetadata = null;
@@ -201,7 +280,7 @@ export default function EmbeddingDetails() {
 
     setIsSaving(true);
     try {
-      const response = await put(`/${PLUGIN_ID}/embeddings/update-embedding/${id}`, {
+      const response = await put(`/${PLUGIN_ID}/embeddings/update-embedding/${activeChunk.documentId}`, {
         data: {
           title: editTitle.trim(),
           content: editContent.trim(),
@@ -209,11 +288,22 @@ export default function EmbeddingDetails() {
         },
       });
 
-      setData(response.data as EmbeddingData);
+      const updatedData = response.data as EmbeddingData;
+
+      // Update the chunk in the chunks array
+      if (isChunkedDocument) {
+        const newChunks = [...chunks];
+        newChunks[activeChunkIndex] = updatedData;
+        setChunks(newChunks);
+      } else {
+        setData(updatedData);
+        setChunks([updatedData]);
+      }
+
       setIsEditing(false);
       toggleNotification({
         type: "success",
-        message: "Embedding updated successfully",
+        message: "Chunk updated successfully",
       });
     } catch (error: any) {
       console.error("Failed to update embedding:", error);
@@ -224,6 +314,23 @@ export default function EmbeddingDetails() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleChunkSelect = (index: number) => {
+    if (isEditing) {
+      // Warn user about unsaved changes
+      const confirmed = globalThis.confirm("You have unsaved changes. Discard them?");
+      if (!confirmed) return;
+      setIsEditing(false);
+    }
+    setActiveChunkIndex(index);
+  };
+
+  const getOriginalTitle = () => {
+    if (isChunkedDocument && chunks[0]?.metadata) {
+      return (chunks[0].metadata as any).originalTitle || chunks[0].title?.replace(/\s*\[Part \d+\/\d+\]$/, '');
+    }
+    return data?.title || "Embedding Details";
   };
 
   if (isLoading) {
@@ -242,7 +349,7 @@ export default function EmbeddingDetails() {
     );
   }
 
-  if (!data) {
+  if (!data || !activeChunk) {
     return (
       <Main>
         <Layouts.Header
@@ -258,11 +365,21 @@ export default function EmbeddingDetails() {
     );
   }
 
+  const headerTitle = isEditing
+    ? `Edit: ${activeChunk.title}`
+    : isChunkedDocument
+      ? getOriginalTitle()
+      : (data.title || "Embedding Details");
+
+  const headerSubtitle = isChunkedDocument
+    ? `Chunked Document (${chunks.length} parts)`
+    : `Embedding ID: ${data.embeddingId || "N/A"}`;
+
   return (
     <Main>
       <Layouts.Header
-        title={isEditing ? "Edit Embedding" : (data.title || "Embedding Details")}
-        subtitle={`Embedding ID: ${data.embeddingId || "N/A"}`}
+        title={headerTitle}
+        subtitle={headerSubtitle}
         primaryAction={
           isEditing ? (
             <Flex gap={2}>
@@ -270,13 +387,13 @@ export default function EmbeddingDetails() {
                 Cancel
               </Button>
               <Button startIcon={<Check />} onClick={handleSave} loading={isSaving}>
-                {isSaving ? "Saving..." : "Save"}
+                {isSaving ? "Saving..." : "Save Chunk"}
               </Button>
             </Flex>
           ) : (
             <Flex gap={2}>
               <Button variant="secondary" startIcon={<Pencil />} onClick={handleStartEdit}>
-                Edit
+                Edit {isChunkedDocument ? "Chunk" : ""}
               </Button>
               <ConfirmDeleteEmbedding onConfirm={handleDelete} isLoading={isDeleting} />
             </Flex>
@@ -286,6 +403,30 @@ export default function EmbeddingDetails() {
       />
       <Layouts.Content>
         <Box padding={8}>
+          {/* Chunk tabs for chunked documents */}
+          {isChunkedDocument && (
+            <Box marginBottom={4}>
+              <Box background="neutral0" padding={4} hasRadius>
+                <Flex justifyContent="space-between" alignItems="center" marginBottom={3}>
+                  <Typography variant="beta">Document Chunks</Typography>
+                  <Badge>{chunks.length} parts</Badge>
+                </Flex>
+                <ChunkTabsContainer gap={0}>
+                  {chunks.map((chunk, index) => (
+                    <ChunkTab
+                      key={chunk.documentId}
+                      $isActive={index === activeChunkIndex}
+                      onClick={() => handleChunkSelect(index)}
+                    >
+                      Part {index + 1}
+                      {index === activeChunkIndex && isEditing && " (editing)"}
+                    </ChunkTab>
+                  ))}
+                </ChunkTabsContainer>
+              </Box>
+            </Box>
+          )}
+
           {isEditing ? (
             <Grid.Root gap={6}>
               <Grid.Item col={8} s={12}>
@@ -343,11 +484,18 @@ export default function EmbeddingDetails() {
               <Grid.Item col={8} s={12}>
                 <Box background="neutral100" padding={1} hasRadius>
                   <Box padding={4} background="neutral0" hasRadius>
-                    <StyledTypography variant="beta">
-                      Embedding Content
-                    </StyledTypography>
-                    {data.content ? (
-                      <Markdown>{data.content}</Markdown>
+                    <Flex justifyContent="space-between" alignItems="center" marginBottom={3}>
+                      <StyledTypography variant="beta" style={{ margin: 0 }}>
+                        {isChunkedDocument ? `Part ${activeChunkIndex + 1} Content` : "Embedding Content"}
+                      </StyledTypography>
+                      {isChunkedDocument && (
+                        <Typography variant="pi" textColor="neutral600">
+                          {activeChunk.content?.length || 0} characters
+                        </Typography>
+                      )}
+                    </Flex>
+                    {activeChunk.content ? (
+                      <Markdown>{activeChunk.content}</Markdown>
                     ) : (
                       <Typography textColor="neutral600">No content</Typography>
                     )}
@@ -356,7 +504,7 @@ export default function EmbeddingDetails() {
               </Grid.Item>
               <Grid.Item col={4} s={12}>
                 <Box background="neutral100" padding={1} hasRadius>
-                  <Metadata data={data} />
+                  <Metadata data={activeChunk} />
                 </Box>
               </Grid.Item>
             </Grid.Root>

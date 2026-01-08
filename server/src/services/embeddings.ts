@@ -165,12 +165,13 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
       };
     }
 
-    console.log(`Chunking content into ${chunks.length} parts (chunkSize: ${chunkSize}, overlap: ${chunkOverlap})`);
+    console.log(`[createChunkedEmbedding] Chunking content into ${chunks.length} parts (chunkSize: ${chunkSize}, overlap: ${chunkOverlap})`);
 
     const createdChunks: any[] = [];
     let parentDocumentId: string | null = null;
 
     for (const chunk of chunks) {
+      console.log(`[createChunkedEmbedding] Processing chunk ${chunk.chunkIndex + 1}/${chunks.length}`);
       const chunkTitle = formatChunkTitle(title, chunk.chunkIndex, chunk.totalChunks);
 
       // Build chunk metadata
@@ -201,15 +202,18 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
       }
 
       // Create entity in Strapi DB
+      console.log(`[chunk ${chunk.chunkIndex + 1}] Creating entity in DB...`);
       const entity = await strapi.documents(CONTENT_TYPE_UID).create({
         data: entityData,
       });
+      console.log(`[chunk ${chunk.chunkIndex + 1}] Entity created: ${entity.documentId}`);
 
       // Store first chunk's documentId as parent reference
       if (chunk.chunkIndex === 0) {
         parentDocumentId = entity.documentId;
       } else {
         // Update metadata with parent reference
+        console.log(`[chunk ${chunk.chunkIndex + 1}] Updating metadata with parent ref...`);
         await strapi.documents(CONTENT_TYPE_UID).update({
           documentId: entity.documentId,
           data: {
@@ -219,11 +223,13 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
             },
           } as any,
         });
+        console.log(`[chunk ${chunk.chunkIndex + 1}] Metadata updated`);
       }
 
       // Create vector embedding if plugin is initialized
       if (pluginManager.isInitialized()) {
         try {
+          console.log(`[chunk ${chunk.chunkIndex + 1}] Creating OpenAI embedding...`);
           const result = await pluginManager.createEmbedding({
             id: entity.documentId,
             title: chunkTitle,
@@ -231,8 +237,10 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
             collectionType: collectionType || "standalone",
             fieldName: fieldName || "content",
           });
+          console.log(`[chunk ${chunk.chunkIndex + 1}] OpenAI embedding created`);
 
           // Update entity with embedding ID and vector
+          console.log(`[chunk ${chunk.chunkIndex + 1}] Saving embedding to DB...`);
           const updatedEntity = await strapi.documents(CONTENT_TYPE_UID).update({
             documentId: entity.documentId,
             data: {
@@ -240,16 +248,19 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
               embedding: result.embedding,
             } as any,
           });
+          console.log(`[chunk ${chunk.chunkIndex + 1}] Chunk complete`);
 
           createdChunks.push(updatedEntity);
-        } catch (error) {
-          console.error(`Failed to create embedding for chunk ${chunk.chunkIndex}:`, error);
+        } catch (error: any) {
+          console.error(`[chunk ${chunk.chunkIndex + 1}] FAILED:`, error.message || error);
           createdChunks.push(entity);
         }
       } else {
         createdChunks.push(entity);
       }
     }
+
+    console.log(`[createChunkedEmbedding] Completed, created ${createdChunks.length} chunks, first documentId: ${createdChunks[0]?.documentId}`);
 
     return {
       entity: createdChunks[0],
@@ -314,7 +325,10 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
             $containsi: `"parentDocumentId":"${documentId}"`,
           },
         },
+        limit: -1, // No limit - get all
       });
+
+      console.log(`[findRelatedChunks] Found ${children.length} children for parent ${documentId}`);
 
       if (children.length === 0) {
         return [entry];
@@ -335,7 +349,10 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
           },
         ],
       },
+      limit: -1, // No limit - get all
     });
+
+    console.log(`[findRelatedChunks] Found ${allChunks.length} total chunks for parent ${parentId}`);
 
     // Sort by chunk index
     return allChunks.sort((a, b) => {

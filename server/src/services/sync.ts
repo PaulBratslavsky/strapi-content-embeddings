@@ -40,6 +40,19 @@ interface StrapiEmbedding {
   fieldName: string;
 }
 
+export interface RecreateResult {
+  success: boolean;
+  timestamp: string;
+  deletedFromNeon: number;
+  processedFromStrapi: number;
+  recreatedInNeon: number;
+  errors: string[];
+  details: {
+    recreated: string[];
+    failed: string[];
+  };
+}
+
 const sync = ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
    * Sync embeddings from Neon DB to Strapi DB
@@ -289,6 +302,117 @@ const sync = ({ strapi }: { strapi: Core.Strapi }) => ({
       missingInNeon,
       contentDifferences,
     };
+  },
+
+  /**
+   * Recreate all embeddings in Neon DB from Strapi data
+   *
+   * This will:
+   * 1. Delete ALL embeddings from Neon DB
+   * 2. Re-create embeddings for each Strapi embedding entry
+   * 3. Update Strapi entries with new embedding IDs
+   *
+   * Use this when embeddings were created with incorrect metadata format
+   */
+  async recreateAllEmbeddings(): Promise<RecreateResult> {
+    const result: RecreateResult = {
+      success: false,
+      timestamp: new Date().toISOString(),
+      deletedFromNeon: 0,
+      processedFromStrapi: 0,
+      recreatedInNeon: 0,
+      errors: [],
+      details: {
+        recreated: [],
+        failed: [],
+      },
+    };
+
+    if (!pluginManager.isInitialized()) {
+      result.errors.push(
+        "Plugin manager not initialized. Check your Neon and OpenAI configuration."
+      );
+      return result;
+    }
+
+    try {
+      // Step 1: Clear all embeddings from Neon
+      console.log("[recreateAllEmbeddings] Step 1: Clearing Neon DB...");
+      result.deletedFromNeon = await pluginManager.clearAllNeonEmbeddings();
+      console.log(`[recreateAllEmbeddings] Deleted ${result.deletedFromNeon} embeddings from Neon`);
+
+      // Step 2: Get all embeddings from Strapi
+      console.log("[recreateAllEmbeddings] Step 2: Fetching Strapi embeddings...");
+      const strapiEmbeddings = await strapi
+        .documents(CONTENT_TYPE_UID)
+        .findMany({
+          limit: -1, // Get all
+        });
+
+      result.processedFromStrapi = strapiEmbeddings.length;
+      console.log(`[recreateAllEmbeddings] Found ${strapiEmbeddings.length} embeddings in Strapi`);
+
+      if (strapiEmbeddings.length === 0) {
+        result.success = true;
+        return result;
+      }
+
+      // Step 3: Recreate each embedding in Neon
+      console.log("[recreateAllEmbeddings] Step 3: Recreating embeddings in Neon...");
+
+      for (let i = 0; i < strapiEmbeddings.length; i++) {
+        const entry = strapiEmbeddings[i] as any;
+        const progress = `[${i + 1}/${strapiEmbeddings.length}]`;
+
+        if (!entry.content) {
+          console.log(`${progress} Skipping ${entry.documentId} - no content`);
+          result.details.failed.push(`${entry.documentId}: no content`);
+          continue;
+        }
+
+        try {
+          console.log(`${progress} Creating embedding for: ${entry.title || entry.documentId}`);
+
+          // Create embedding in Neon with proper JSONB metadata
+          const embeddingResult = await pluginManager.createEmbedding({
+            id: entry.documentId,
+            title: entry.title || "",
+            content: entry.content,
+            collectionType: entry.collectionType || "standalone",
+            fieldName: entry.fieldName || "content",
+          });
+
+          // Update Strapi entry with new embedding ID
+          await strapi.documents(CONTENT_TYPE_UID).update({
+            documentId: entry.documentId,
+            data: {
+              embeddingId: embeddingResult.embeddingId,
+              embedding: embeddingResult.embedding,
+            } as any,
+          });
+
+          result.recreatedInNeon++;
+          result.details.recreated.push(`${entry.documentId} (${entry.title || "untitled"})`);
+
+          // Add small delay to avoid rate limiting
+          if (i < strapiEmbeddings.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        } catch (error: any) {
+          console.error(`${progress} Failed:`, error.message || error);
+          result.errors.push(`${entry.documentId}: ${error.message || error}`);
+          result.details.failed.push(`${entry.documentId}: ${error.message || error}`);
+        }
+      }
+
+      result.success = result.errors.length === 0;
+      console.log(`[recreateAllEmbeddings] Complete. Recreated: ${result.recreatedInNeon}, Failed: ${result.details.failed.length}`);
+
+      return result;
+    } catch (error: any) {
+      result.errors.push(`Recreate failed: ${error.message || error}`);
+      return result;
+    }
   },
 });
 

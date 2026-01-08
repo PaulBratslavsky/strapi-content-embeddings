@@ -1,6 +1,18 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Main, Box, Button, TextInput, Flex, Loader } from '@strapi/design-system';
+import {
+  Main,
+  Box,
+  Button,
+  TextInput,
+  Flex,
+  Loader,
+  Typography,
+  Pagination,
+  PreviousLink,
+  PageLink,
+  NextLink,
+} from '@strapi/design-system';
 import { Plus, Search } from '@strapi/icons';
 import { useFetchClient, Layouts } from '@strapi/strapi/admin';
 import qs from 'qs';
@@ -24,6 +36,8 @@ interface EmbeddingsResponse {
   totalCount: number;
 }
 
+const PAGE_SIZE = 10;
+
 function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number
@@ -42,9 +56,14 @@ export function HomePage() {
   const [embeddings, setEmbeddings] = useState<EmbeddingsResponse | null>(null);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const buildQuery = (searchTerm: string) =>
+  const totalPages = embeddings ? Math.ceil(embeddings.totalCount / PAGE_SIZE) : 0;
+
+  const buildQuery = (searchTerm: string, page: number) =>
     qs.stringify({
+      page,
+      pageSize: PAGE_SIZE,
       filters: searchTerm
         ? {
             $or: [{ title: { $containsi: searchTerm } }, { content: { $containsi: searchTerm } }],
@@ -53,10 +72,10 @@ export function HomePage() {
     });
 
   const fetchData = useCallback(
-    async (searchTerm: string) => {
+    async (searchTerm: string, page: number) => {
       setIsLoading(true);
       try {
-        const response = await get(`/${PLUGIN_ID}/embeddings/find?${buildQuery(searchTerm)}`);
+        const response = await get(`/${PLUGIN_ID}/embeddings/find?${buildQuery(searchTerm, page)}`);
         setEmbeddings(response.data as EmbeddingsResponse);
       } catch (error) {
         console.error('Failed to fetch embeddings:', error);
@@ -71,8 +90,13 @@ export function HomePage() {
   const debouncedFetch = useMemo(() => debounce(fetchData, 500), [fetchData]);
 
   useEffect(() => {
-    debouncedFetch(search);
-  }, [search, debouncedFetch]);
+    debouncedFetch(search, currentPage);
+  }, [search, currentPage, debouncedFetch]);
+
+  // Reset to page 1 when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(e.target.value);
@@ -129,11 +153,74 @@ export function HomePage() {
     );
   };
 
+  // Check if pagination should be shown
+  const shouldShowPagination = embeddings && embeddings.totalCount > 0 && totalPages > 1;
+
+  // Get visible page numbers for pagination
+  const getVisiblePages = (): number[] => {
+    const pages: number[] = [];
+    const maxVisible = 5;
+
+    let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    const end = Math.min(totalPages, start + maxVisible - 1);
+
+    if (end - start + 1 < maxVisible) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
+  };
+
+  // Render pagination info and controls
+  const renderPagination = () => {
+    if (!shouldShowPagination || !embeddings) {
+      return null;
+    }
+
+    const startItem = (currentPage - 1) * PAGE_SIZE + 1;
+    const endItem = Math.min(currentPage * PAGE_SIZE, embeddings.totalCount);
+    const visiblePages = getVisiblePages();
+
+    return (
+      <Flex direction="column" alignItems="center" gap={3} paddingTop={6}>
+        <Pagination activePage={currentPage} pageCount={totalPages}>
+          <PreviousLink
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+          >
+            Previous
+          </PreviousLink>
+          {visiblePages.map((page) => (
+            <PageLink
+              key={page}
+              number={page}
+              onClick={() => setCurrentPage(page)}
+            >
+              {page}
+            </PageLink>
+          ))}
+          <NextLink
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+          >
+            Next
+          </NextLink>
+        </Pagination>
+        <Typography variant="pi" textColor="neutral600">
+          Showing {startItem} to {endItem} of {embeddings.totalCount} entries
+        </Typography>
+      </Flex>
+    );
+  };
+
   return (
     <Main>
       <Layouts.Header
         title={'Content Embeddings'}
-        subtitle={`${embeddings?.count || 0} results found`}
+        subtitle={`${embeddings?.totalCount || 0} embeddings total`}
         primaryAction={
           <Button startIcon={<Plus />} onClick={handleCreateNew}>
             Create new embedding
@@ -151,6 +238,7 @@ export function HomePage() {
           />
         </Box>
         {renderEmbeddingsContent()}
+        {renderPagination()}
       </Layouts.Content>
       <ChatModal />
     </Main>

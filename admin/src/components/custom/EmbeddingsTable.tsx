@@ -36,7 +36,7 @@ interface EmbeddingsTableProps {
   data: Embedding[];
 }
 
-export function EmbeddingsTable({ data }: EmbeddingsTableProps) {
+export function EmbeddingsTable({ data }: Readonly<EmbeddingsTableProps>) {
   const navigate = useNavigate();
 
   const handleRowClick = (documentId: string) => {
@@ -44,7 +44,7 @@ export function EmbeddingsTable({ data }: EmbeddingsTableProps) {
   };
 
   return (
-    <Box padding={8} background="neutral100">
+    <Box padding={0} background="neutral100">
       <Table colCount={5} rowCount={data.length + 1}>
         <Thead>
           <Tr>

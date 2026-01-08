@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import qs from "qs";
@@ -17,7 +17,7 @@ import {
   Loader,
   Flex,
 } from "@strapi/design-system";
-import { Plus, Eye, Pencil } from "@strapi/icons";
+import { Plus, Eye } from "@strapi/icons";
 import { PLUGIN_ID } from "../../pluginId";
 import { MarkdownEditor } from "./MarkdownEditor";
 
@@ -36,7 +36,7 @@ interface ExistingEmbedding {
 }
 
 export function EmbeddingsModal() {
-  const { post, get, put } = useFetchClient();
+  const { post, get } = useFetchClient();
   const { toggleNotification } = useNotification();
   const navigate = useNavigate();
 
@@ -47,7 +47,6 @@ export function EmbeddingsModal() {
   const modifiedValues = form?.values || {};
 
   const [isVisible, setIsVisible] = useState(false);
-  const [isUpdateMode, setIsUpdateMode] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [fieldName, setFieldName] = useState("");
@@ -67,21 +66,21 @@ export function EmbeddingsModal() {
         // Query embeddings filtered by metadata containing this documentId
         const query = qs.stringify({
           filters: {
-            $and: [
-              { collectionType: { $eq: slug } },
-              { metadata: { $containsi: id } },
-            ],
+            metadata: { $containsi: id },
           },
         });
 
         const response = await get(`/${PLUGIN_ID}/embeddings/find?${query}`);
 
-        if (response.data?.data?.length > 0) {
+        // Handle response - could be { data: [...] } or { data: { data: [...] } }
+        const embeddings = response.data?.data || response.data || [];
+
+        if (Array.isArray(embeddings) && embeddings.length > 0) {
           // Found existing embedding for this content
           setExistingEmbedding({
-            documentId: response.data.data[0].documentId,
-            title: response.data.data[0].title,
-            content: response.data.data[0].content,
+            documentId: embeddings[0].documentId,
+            title: embeddings[0].title,
+            content: embeddings[0].content,
           });
         }
       } catch (error) {
@@ -94,21 +93,20 @@ export function EmbeddingsModal() {
     checkExistingEmbedding();
   }, [id, slug, get]);
 
-  // Find text content from form values
-  useEffect(() => {
-    if (!modifiedValues) return;
+  // Extract text content from form values
+  const extractContentFromForm = useCallback(() => {
+    if (!modifiedValues) return "";
 
     // Look for common text field names
     const textFieldNames = ["content", "description", "body", "text", "richtext", "markdown"];
 
-    for (const fieldName of textFieldNames) {
-      const value = modifiedValues[fieldName];
+    for (const name of textFieldNames) {
+      const value = modifiedValues[name];
       if (value) {
-        setFieldName(fieldName);
         // Handle different content formats
         if (typeof value === "string" && value.trim()) {
-          setContent(value);
-          break;
+          setFieldName(name);
+          return value;
         } else if (Array.isArray(value)) {
           // Blocks format - extract text
           const text = value
@@ -120,13 +118,22 @@ export function EmbeddingsModal() {
             })
             .join("\n\n");
           if (text.trim()) {
-            setContent(text);
-            break;
+            setFieldName(name);
+            return text;
           }
         }
       }
     }
+    return "";
   }, [modifiedValues]);
+
+  // Find text content from form values
+  useEffect(() => {
+    const formContent = extractContentFromForm();
+    if (formContent) {
+      setContent(formContent);
+    }
+  }, [extractContentFromForm]);
 
   const contentLength = content.length;
   const willChunk = contentLength > CHUNK_SIZE;
@@ -148,19 +155,13 @@ export function EmbeddingsModal() {
   const isValid = title.trim() && content.trim(); // No length limit - auto-chunks if needed
 
   function handleOpenCreate() {
-    setIsUpdateMode(false);
     setTitle("");
-    // Content is already set from form values
-    setIsVisible(true);
-  }
-
-  function handleOpenUpdate() {
-    if (existingEmbedding) {
-      setIsUpdateMode(true);
-      setTitle(existingEmbedding.title);
-      // Use current form content for update
-      setIsVisible(true);
+    // Refresh content from current form values
+    const formContent = extractContentFromForm();
+    if (formContent) {
+      setContent(formContent);
     }
+    setIsVisible(true);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -185,54 +186,45 @@ export function EmbeddingsModal() {
     setIsLoading(true);
 
     try {
-      if (isUpdateMode && existingEmbedding) {
-        // Update existing embedding
-        const result = await put(`/${PLUGIN_ID}/embeddings/update-embedding/${existingEmbedding.documentId}`, {
-          data: {
-            title: title.trim(),
-            content: content.trim(),
-            metadata: generateMetadata(),
-          },
-        });
+      const contentToEmbed = content.trim();
+      const shouldChunk = contentToEmbed.length > CHUNK_SIZE;
+      const chunks = shouldChunk ? Math.ceil(contentToEmbed.length / CHUNK_SIZE) : 1;
 
-        setExistingEmbedding({
-          documentId: result.data.documentId,
-          title: result.data.title,
-          content: result.data.content,
-        });
-        setIsVisible(false);
-        toggleNotification({
-          type: "success",
-          message: "Embedding updated successfully",
-        });
-      } else {
-        // Create new embedding
-        const result = await post(`/${PLUGIN_ID}/embeddings/create-embedding`, {
-          data: {
-            title: title.trim(),
-            content: content.trim(),
-            collectionType: slug || collectionType,
-            fieldName,
-            metadata: generateMetadata(),
-          },
-        });
+      if (shouldChunk) {
+        console.log(`Creating chunked embedding: ${contentToEmbed.length} chars (~${chunks} parts)`);
+      }
 
+      const result = await post(`/${PLUGIN_ID}/embeddings/create-embedding`, {
+        data: {
+          title: title.trim(),
+          content: contentToEmbed,
+          collectionType: slug || collectionType,
+          fieldName,
+          metadata: generateMetadata(),
+          autoChunk: shouldChunk,
+        },
+      });
+
+      const responseData = result?.data || result;
+
+      if (responseData?.documentId) {
         setExistingEmbedding({
-          documentId: result.data.documentId,
-          title: result.data.title,
-          content: result.data.content,
-        });
-        setIsVisible(false);
-        toggleNotification({
-          type: "success",
-          message: "Embedding created successfully",
+          documentId: responseData.documentId,
+          title: responseData.title,
+          content: responseData.content,
         });
       }
+      setIsVisible(false);
+
+      const message = shouldChunk
+        ? `Embedding created and chunked into ${chunks} parts`
+        : "Embedding created successfully";
+      toggleNotification({ type: "success", message });
     } catch (error: any) {
-      console.error("Failed to save embedding:", error);
+      console.error("Failed to create embedding:", error);
       toggleNotification({
         type: "danger",
-        message: error.message || "Failed to save embedding",
+        message: error.message || "Failed to create embedding",
       });
     } finally {
       setIsLoading(false);
@@ -259,25 +251,14 @@ export function EmbeddingsModal() {
     );
   }
 
-  // Determine button text based on mode and loading state
-  let submitButtonText: string;
-  if (isUpdateMode) {
-    submitButtonText = isLoading ? "Updating..." : "Update Embedding";
-  } else {
-    submitButtonText = isLoading ? "Creating..." : "Create Embedding";
-  }
+  const submitButtonText = isLoading ? "Creating..." : "Create Embedding";
 
   return (
     <Box paddingTop={2}>
       {existingEmbedding ? (
-        <Flex direction="column" gap={2}>
-          <Button onClick={handleViewEmbedding} startIcon={<Eye />} fullWidth>
-            View Embedding
-          </Button>
-          <Button onClick={handleOpenUpdate} startIcon={<Pencil />} variant="secondary" fullWidth>
-            Update Embedding
-          </Button>
-        </Flex>
+        <Button onClick={handleViewEmbedding} startIcon={<Eye />} fullWidth>
+          View Embedding
+        </Button>
       ) : (
         <Button
           onClick={handleOpenCreate}
@@ -298,9 +279,7 @@ export function EmbeddingsModal() {
       <Modal.Root open={isVisible} onOpenChange={setIsVisible}>
         <Modal.Content>
           <Modal.Header>
-            <Modal.Title>
-              {isUpdateMode ? "Update Embedding" : "Create Embedding from Content"}
-            </Modal.Title>
+            <Modal.Title>Create Embedding from Content</Modal.Title>
           </Modal.Header>
           <Modal.Body>
             <Box>
@@ -329,7 +308,6 @@ export function EmbeddingsModal() {
                   <Field.Label>Content</Field.Label>
                   <Field.Hint>
                     {fieldName ? `From field: ${fieldName}` : "Enter content manually"}
-                    {isUpdateMode && " - Changes will regenerate the embedding vector"}
                   </Field.Hint>
                 </Field.Root>
                 <MarkdownEditor

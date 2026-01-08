@@ -76,4 +76,43 @@ export default [
       },
     ]
   },
+},
+{
+  method: 'GET',
+  path: '/embeddings/related-chunks/:id',
+  handler: 'controller.getRelatedChunks',
+  config: {
+    policies: [
+      {
+        name: 'admin::hasPermissions',
+        config: { actions: ['plugin::strapi-content-embeddings.read'] }
+      },
+    ]
+  },
+},
+{
+  method: 'GET',
+  path: '/debug/neon',
+  handler: 'controller.debugNeon',
+  config: {
+    policies: [
+      {
+        name: 'admin::hasPermissions',
+        config: { actions: ['plugin::strapi-content-embeddings.read'] }
+      },
+    ]
+  },
+},
+{
+  method: 'POST',
+  path: '/recreate',
+  handler: 'controller.recreateEmbeddings',
+  config: {
+    policies: [
+      {
+        name: 'admin::hasPermissions',
+        config: { actions: ['plugin::strapi-content-embeddings.update'] }
+      },
+    ]
+  },
 },]

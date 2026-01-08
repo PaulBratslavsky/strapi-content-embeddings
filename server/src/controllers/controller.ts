@@ -5,13 +5,18 @@ const PLUGIN_ID = "strapi-content-embeddings";
 const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
   async createEmbedding(ctx: any) {
     try {
+      console.log("[createEmbedding] Starting, autoChunk:", ctx.request.body?.data?.autoChunk);
+
       const result = await strapi
         .plugin(PLUGIN_ID)
         .service("embeddings")
         .createEmbedding(ctx.request.body);
 
+      console.log("[createEmbedding] Completed, documentId:", result?.documentId);
+
       ctx.body = result;
     } catch (error: any) {
+      console.error("[createEmbedding] Error:", error.message);
       ctx.throw(500, error.message || "Failed to create embedding");
     }
   },
@@ -98,6 +103,29 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
+   * Get all chunks related to a document
+   * GET /api/strapi-content-embeddings/embeddings/related-chunks/:id
+   */
+  async getRelatedChunks(ctx: any) {
+    try {
+      const { id } = ctx.params;
+      const result = await strapi
+        .plugin(PLUGIN_ID)
+        .service("embeddings")
+        .findRelatedChunks(id);
+
+      console.log(`[getRelatedChunks] Found ${result.length} chunks for document ${id}`);
+
+      ctx.body = {
+        data: result,
+        count: result.length,
+      };
+    } catch (error: any) {
+      ctx.throw(500, error.message || "Failed to get related chunks");
+    }
+  },
+
+  /**
    * Sync embeddings from Neon DB to Strapi DB
    * GET /api/strapi-content-embeddings/sync
    *
@@ -137,6 +165,47 @@ const controller = ({ strapi }: { strapi: Core.Strapi }) => ({
       ctx.body = result;
     } catch (error: any) {
       ctx.throw(500, error.message || "Failed to get sync status");
+    }
+  },
+
+  /**
+   * Debug endpoint to inspect Neon DB contents
+   * GET /api/strapi-content-embeddings/debug/neon
+   */
+  async debugNeon(ctx: any) {
+    try {
+      const { pluginManager } = require("../plugin-manager");
+      const result = await pluginManager.debugNeonEmbeddings();
+
+      ctx.body = {
+        count: result.length,
+        embeddings: result,
+      };
+    } catch (error: any) {
+      ctx.throw(500, error.message || "Failed to debug Neon");
+    }
+  },
+
+  /**
+   * Recreate all embeddings in Neon from Strapi data
+   * POST /api/strapi-content-embeddings/recreate
+   *
+   * Use this when embeddings were created with incorrect metadata format
+   * WARNING: This will delete ALL existing Neon embeddings and recreate them
+   */
+  async recreateEmbeddings(ctx: any) {
+    try {
+      console.log("[recreateEmbeddings] Starting recreation of all embeddings...");
+
+      const result = await strapi
+        .plugin(PLUGIN_ID)
+        .service("sync")
+        .recreateAllEmbeddings();
+
+      ctx.body = result;
+    } catch (error: any) {
+      console.error("[recreateEmbeddings] Error:", error.message);
+      ctx.throw(500, error.message || "Failed to recreate embeddings");
     }
   },
 });
