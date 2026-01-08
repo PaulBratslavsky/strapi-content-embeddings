@@ -27,7 +27,7 @@ const StyledTypography = styled(Typography)`
   margin-bottom: 0.5rem;
 `;
 
-const MAX_CONTENT_LENGTH = 4000;
+const CHUNK_SIZE = 4000; // Content over this will be auto-chunked
 
 interface ExistingEmbedding {
   documentId: string;
@@ -129,7 +129,8 @@ export function EmbeddingsModal() {
   }, [modifiedValues]);
 
   const contentLength = content.length;
-  const isOverLimit = contentLength > MAX_CONTENT_LENGTH;
+  const willChunk = contentLength > CHUNK_SIZE;
+  const estimatedChunks = willChunk ? Math.ceil(contentLength / (CHUNK_SIZE - 200)) : 1;
   // Check if content is saved (has an id) - don't require publish
   const isSaved = !!id;
 
@@ -144,7 +145,7 @@ export function EmbeddingsModal() {
     };
   }
 
-  const isValid = title.trim() && content.trim() && !isOverLimit;
+  const isValid = title.trim() && content.trim(); // No length limit - auto-chunks if needed
 
   function handleOpenCreate() {
     setIsUpdateMode(false);
@@ -177,14 +178,6 @@ export function EmbeddingsModal() {
       toggleNotification({
         type: "warning",
         message: "Embeddings content is required",
-      });
-      return;
-    }
-
-    if (isOverLimit) {
-      toggleNotification({
-        type: "warning",
-        message: `Content exceeds ${MAX_CONTENT_LENGTH} character limit`,
       });
       return;
     }
@@ -266,6 +259,14 @@ export function EmbeddingsModal() {
     );
   }
 
+  // Determine button text based on mode and loading state
+  let submitButtonText: string;
+  if (isUpdateMode) {
+    submitButtonText = isLoading ? "Updating..." : "Update Embedding";
+  } else {
+    submitButtonText = isLoading ? "Creating..." : "Create Embedding";
+  }
+
   return (
     <Box paddingTop={2}>
       {existingEmbedding ? (
@@ -304,9 +305,9 @@ export function EmbeddingsModal() {
           <Modal.Body>
             <Box>
               <StyledTypography variant="omega" textColor="neutral600">
-                Chunk Size: {contentLength}/{MAX_CONTENT_LENGTH}
-                {isOverLimit && (
-                  <Typography textColor="danger600"> (exceeds limit)</Typography>
+                Content: {contentLength} characters
+                {willChunk && (
+                  <Typography textColor="primary600"> (will create ~{estimatedChunks} embeddings)</Typography>
                 )}
               </StyledTypography>
 
@@ -348,10 +349,7 @@ export function EmbeddingsModal() {
               disabled={isLoading || !isValid}
               loading={isLoading}
             >
-              {isLoading
-                ? (isUpdateMode ? "Updating..." : "Creating...")
-                : (isUpdateMode ? "Update Embedding" : "Create Embedding")
-              }
+              {submitButtonText}
             </Button>
           </Modal.Footer>
         </Modal.Content>

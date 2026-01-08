@@ -11,6 +11,8 @@ A Strapi v5 plugin that creates vector embeddings from your content using OpenAI
 - **Content Manager Integration**: Create embeddings directly from any content type's edit view
 - **Standalone Embeddings**: Create embeddings independent of content types
 - **Multiple Embedding Models**: Support for OpenAI's text-embedding-3-small, text-embedding-3-large, and text-embedding-ada-002
+- **Database Sync**: Sync embeddings from Neon DB to Strapi with cron-compatible endpoints
+- **Automatic Chunking**: Split large content into multiple embeddings with overlap for context preservation
 
 ## Requirements
 
@@ -205,6 +207,191 @@ All endpoints require admin authentication.
 | `GET` | `/strapi-content-embeddings/embeddings/find` | List all embeddings |
 | `GET` | `/strapi-content-embeddings/embeddings/find/:id` | Get a single embedding |
 | `GET` | `/strapi-content-embeddings/embeddings/embeddings-query?query=...` | RAG query |
+
+## Database Sync (Neon to Strapi)
+
+The plugin provides endpoints to sync embeddings from Neon DB (source of truth) to Strapi. These endpoints are designed to be triggered manually or via cron jobs.
+
+### Sync Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET/POST` | `/api/strapi-content-embeddings/sync` | Sync embeddings from Neon to Strapi |
+| `GET` | `/api/strapi-content-embeddings/sync/status` | Check sync status without making changes |
+
+### Query Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `dryRun` | boolean | `false` | Preview changes without applying them |
+| `removeOrphans` | boolean | `false` | Remove Strapi entries that don't exist in Neon |
+
+### Usage Examples
+
+**Check sync status:**
+```bash
+curl "http://localhost:1337/api/strapi-content-embeddings/sync/status" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+Response:
+```json
+{
+  "neonCount": 150,
+  "strapiCount": 145,
+  "inSync": false,
+  "missingInStrapi": 5,
+  "missingInNeon": 0,
+  "contentDifferences": 2
+}
+```
+
+**Dry run (preview changes):**
+```bash
+curl "http://localhost:1337/api/strapi-content-embeddings/sync?dryRun=true" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+**Run sync:**
+```bash
+curl "http://localhost:1337/api/strapi-content-embeddings/sync" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+**Sync and remove orphans:**
+```bash
+curl "http://localhost:1337/api/strapi-content-embeddings/sync?removeOrphans=true" \
+  -H "Authorization: Bearer YOUR_API_TOKEN"
+```
+
+### Sync Response
+
+```json
+{
+  "success": true,
+  "timestamp": "2024-01-07T12:00:00.000Z",
+  "neonCount": 150,
+  "strapiCount": 150,
+  "actions": {
+    "created": 5,
+    "updated": 2,
+    "orphansRemoved": 0
+  },
+  "details": {
+    "created": ["doc1 (Title 1)", "doc2 (Title 2)"],
+    "updated": ["doc3 (Title 3)"],
+    "orphansRemoved": []
+  },
+  "errors": []
+}
+```
+
+### Cron Job Example
+
+```bash
+# Sync every hour
+0 * * * * curl -s "https://your-strapi.com/api/strapi-content-embeddings/sync" \
+  -H "Authorization: Bearer YOUR_API_TOKEN" >> /var/log/embeddings-sync.log
+```
+
+## Content Chunking
+
+For large content that exceeds the recommended size for embeddings (~4000 characters / ~1000 tokens), the plugin supports automatic chunking.
+
+### How Chunking Works
+
+1. **Smart Splitting**: Content is split at natural boundaries (paragraphs, sentences, words) to preserve meaning
+2. **Overlap**: Chunks include overlapping content (default: 200 chars) to maintain context between chunks
+3. **Metadata**: Each chunk stores metadata linking it to the original content and other chunks
+4. **Titles**: Chunk titles include part numbers (e.g., "My Document [Part 1/3]")
+
+### Configuration
+
+Add chunking options to your plugin config:
+
+```typescript
+// config/plugins.ts
+export default ({ env }) => ({
+  "strapi-content-embeddings": {
+    enabled: true,
+    config: {
+      openAIApiKey: env("OPENAI_API_KEY"),
+      neonConnectionString: env("NEON_CONNECTION_STRING"),
+      // Chunking options
+      chunkSize: 4000,      // Max characters per chunk (default: 4000)
+      chunkOverlap: 200,    // Overlap between chunks (default: 200)
+      autoChunk: false,     // Auto-chunk large content globally (default: false)
+    },
+  },
+});
+```
+
+### Using Chunking
+
+#### Via MCP Tool
+
+```json
+{
+  "tool": "create_embedding",
+  "arguments": {
+    "title": "My Long Document",
+    "content": "... very long content ...",
+    "autoChunk": true
+  }
+}
+```
+
+#### Programmatic Usage
+
+```typescript
+// Create with automatic chunking
+const result = await strapi
+  .plugin("strapi-content-embeddings")
+  .service("embeddings")
+  .createChunkedEmbedding({
+    data: {
+      title: "My Long Document",
+      content: "... very long content ...",
+    },
+  });
+
+console.log(result);
+// {
+//   entity: { ... first chunk ... },
+//   chunks: [ ... all chunks ... ],
+//   totalChunks: 5,
+//   wasChunked: true
+// }
+
+// Or use createEmbedding with autoChunk flag
+const embedding = await strapi
+  .plugin("strapi-content-embeddings")
+  .service("embeddings")
+  .createEmbedding({
+    data: {
+      title: "My Document",
+      content: "... long content ...",
+      autoChunk: true,  // Enable chunking
+    },
+  });
+```
+
+### Chunk Metadata
+
+Each chunk embedding includes metadata:
+
+```json
+{
+  "isChunk": true,
+  "chunkIndex": 0,
+  "totalChunks": 5,
+  "startOffset": 0,
+  "endOffset": 4200,
+  "originalTitle": "My Long Document",
+  "parentDocumentId": "abc123",
+  "estimatedTokens": 1050
+}
+```
 
 ## How It Works
 

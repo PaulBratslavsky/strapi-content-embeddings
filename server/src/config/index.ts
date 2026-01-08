@@ -11,6 +11,12 @@ export interface PluginConfigSchema {
   openAIApiKey?: string;
   neonConnectionString?: string;
   embeddingModel?: EmbeddingModelName;
+  /** Maximum characters per chunk (default: 4000, roughly ~1000 tokens) */
+  chunkSize?: number;
+  /** Number of characters to overlap between chunks (default: 200) */
+  chunkOverlap?: number;
+  /** Automatically chunk content that exceeds chunkSize (default: false) */
+  autoChunk?: boolean;
 }
 
 export default {
@@ -18,6 +24,9 @@ export default {
     openAIApiKey: "",
     neonConnectionString: "",
     embeddingModel: "text-embedding-3-small" as EmbeddingModelName,
+    chunkSize: 4000,
+    chunkOverlap: 200,
+    autoChunk: false,
   },
   validator(config: PluginConfigSchema) {
     if (!config.openAIApiKey) {
@@ -35,6 +44,12 @@ export default {
         `strapi-content-embeddings: Invalid embeddingModel "${config.embeddingModel}". ` +
         `Valid options: ${Object.keys(EMBEDDING_MODELS).join(", ")}. ` +
         `Defaulting to "text-embedding-3-small".`
+      );
+    }
+    if (config.chunkSize && (config.chunkSize < 100 || config.chunkSize > 8000)) {
+      console.warn(
+        `strapi-content-embeddings: chunkSize ${config.chunkSize} is outside recommended range (100-8000). ` +
+        `Using default value of 4000.`
       );
     }
   },

@@ -8,7 +8,7 @@ import { PLUGIN_ID } from "../pluginId";
 import { CreateEmbeddingsForm } from "../components/forms/CreateEmbeddingForm";
 import { BackLink } from "../components/custom/BackLink";
 
-const MAX_CONTENT_LENGTH = 4000;
+const CHUNK_SIZE = 4000; // Content over this will be auto-chunked
 
 export default function CreateEmbeddings() {
   const { formatMessage } = useIntl();
@@ -21,8 +21,10 @@ export default function CreateEmbeddings() {
   const [metadata, setMetadata] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const isValid = title.trim() && content.trim() && content.length <= MAX_CONTENT_LENGTH;
+  const isValid = title.trim() && content.trim();
   const contentLength = content.length;
+  const willChunk = contentLength > CHUNK_SIZE;
+  const estimatedChunks = willChunk ? Math.ceil(contentLength / (CHUNK_SIZE - 200)) : 1;
 
   function parseMetadata(): Record<string, any> | null {
     if (!metadata.trim()) return null;
@@ -38,7 +40,7 @@ export default function CreateEmbeddings() {
     e.stopPropagation();
 
     if (!isValid) {
-      setError("Please provide a title and content (max 4000 characters)");
+      setError("Please provide a title and content");
       return;
     }
 
@@ -77,13 +79,23 @@ export default function CreateEmbeddings() {
           id: "CreateEmbeddings.header.title",
           defaultMessage: "Create Embedding",
         })}
-        subtitle={formatMessage(
-          {
-            id: "CreateEmbeddings.header.subtitle",
-            defaultMessage: "Content: {length}/{max} characters",
-          },
-          { length: contentLength, max: MAX_CONTENT_LENGTH }
-        )}
+        subtitle={
+          willChunk
+            ? formatMessage(
+                {
+                  id: "CreateEmbeddings.header.subtitle.chunked",
+                  defaultMessage: "Content: {length} characters (will create ~{chunks} embeddings)",
+                },
+                { length: contentLength, chunks: estimatedChunks }
+              )
+            : formatMessage(
+                {
+                  id: "CreateEmbeddings.header.subtitle",
+                  defaultMessage: "Content: {length} characters",
+                },
+                { length: contentLength }
+              )
+        }
         primaryAction={
           <Button
             type="submit"

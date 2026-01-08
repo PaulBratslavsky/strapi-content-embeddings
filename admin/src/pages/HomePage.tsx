@@ -1,22 +1,14 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import {
-  Main,
-  Box,
-  Button,
-  TextInput,
-  Flex,
-  Loader,
-} from "@strapi/design-system";
-import { Plus, Search } from "@strapi/icons";
-import { useIntl } from "react-intl";
-import { useFetchClient, Layouts } from "@strapi/strapi/admin";
-import qs from "qs";
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Main, Box, Button, TextInput, Flex, Loader } from '@strapi/design-system';
+import { Plus, Search } from '@strapi/icons';
+import { useFetchClient, Layouts } from '@strapi/strapi/admin';
+import qs from 'qs';
 
-import { PLUGIN_ID } from "../pluginId";
-import { EmptyState } from "../components/custom/EmptyState";
-import { EmbeddingsTable } from "../components/custom/EmbeddingsTable";
-import { ChatModal } from "../components/custom/ChatModal";
+import { PLUGIN_ID } from '../pluginId';
+import { EmptyState } from '../components/custom/EmptyState';
+import { EmbeddingsTable } from '../components/custom/EmbeddingsTable';
+import { ChatModal } from '../components/custom/ChatModal';
 
 interface Embedding {
   id: number;
@@ -44,22 +36,18 @@ function debounce<T extends (...args: any[]) => any>(
 }
 
 export function HomePage() {
-  const { formatMessage } = useIntl();
   const { get } = useFetchClient();
   const navigate = useNavigate();
 
   const [embeddings, setEmbeddings] = useState<EmbeddingsResponse | null>(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
   const buildQuery = (searchTerm: string) =>
     qs.stringify({
       filters: searchTerm
         ? {
-            $or: [
-              { title: { $containsi: searchTerm } },
-              { content: { $containsi: searchTerm } },
-            ],
+            $or: [{ title: { $containsi: searchTerm } }, { content: { $containsi: searchTerm } }],
           }
         : undefined,
     });
@@ -68,12 +56,10 @@ export function HomePage() {
     async (searchTerm: string) => {
       setIsLoading(true);
       try {
-        const response = await get(
-          `/${PLUGIN_ID}/embeddings/find?${buildQuery(searchTerm)}`
-        );
+        const response = await get(`/${PLUGIN_ID}/embeddings/find?${buildQuery(searchTerm)}`);
         setEmbeddings(response.data as EmbeddingsResponse);
       } catch (error) {
-        console.error("Failed to fetch embeddings:", error);
+        console.error('Failed to fetch embeddings:', error);
         setEmbeddings({ data: [], count: 0, totalCount: 0 });
       } finally {
         setIsLoading(false);
@@ -82,10 +68,7 @@ export function HomePage() {
     [get]
   );
 
-  const debouncedFetch = useMemo(
-    () => debounce(fetchData, 500),
-    [fetchData]
-  );
+  const debouncedFetch = useMemo(() => debounce(fetchData, 500), [fetchData]);
 
   useEffect(() => {
     debouncedFetch(search);
@@ -102,16 +85,7 @@ export function HomePage() {
   if (isLoading && !embeddings) {
     return (
       <Main>
-        <Layouts.Header
-          title={formatMessage({
-            id: "HomePage.header.title",
-            defaultMessage: "Content Embeddings",
-          })}
-          subtitle={formatMessage({
-            id: "HomePage.header.subtitle",
-            defaultMessage: "Manage your content embeddings",
-          })}
-        />
+        <Layouts.Header title={'Content Embeddings'} subtitle={'Manage your content embeddings'} />
         <Layouts.Content>
           <Flex justifyContent="center" padding={8}>
             <Loader>Loading...</Loader>
@@ -125,16 +99,7 @@ export function HomePage() {
   if (embeddings?.totalCount === 0 && !search) {
     return (
       <Main>
-        <Layouts.Header
-          title={formatMessage({
-            id: "HomePage.header.title",
-            defaultMessage: "Content Embeddings",
-          })}
-          subtitle={formatMessage({
-            id: "HomePage.header.subtitle",
-            defaultMessage: "Manage your content embeddings",
-          })}
-        />
+        <Layouts.Header title={'Content Embeddings'} subtitle={'Manage your content embeddings'} />
         <Layouts.Content>
           <EmptyState />
         </Layouts.Content>
@@ -143,13 +108,31 @@ export function HomePage() {
     );
   }
 
+  // Render embeddings content based on loading state and data
+  const renderEmbeddingsContent = () => {
+    if (isLoading) {
+      return (
+        <Flex justifyContent="center" padding={8}>
+          <Loader>Loading...</Loader>
+        </Flex>
+      );
+    }
+
+    if (embeddings?.data && embeddings.data.length > 0) {
+      return <EmbeddingsTable data={embeddings.data} />;
+    }
+
+    return (
+      <Box padding={8} textAlign="center">
+        No embeddings found matching "{search}"
+      </Box>
+    );
+  };
+
   return (
     <Main>
       <Layouts.Header
-        title={formatMessage({
-          id: "HomePage.header.title",
-          defaultMessage: "Content Embeddings",
-        })}
+        title={'Content Embeddings'}
         subtitle={`${embeddings?.count || 0} results found`}
         primaryAction={
           <Button startIcon={<Plus />} onClick={handleCreateNew}>
@@ -167,17 +150,7 @@ export function HomePage() {
             startAction={<Search />}
           />
         </Box>
-        {isLoading ? (
-          <Flex justifyContent="center" padding={8}>
-            <Loader>Loading...</Loader>
-          </Flex>
-        ) : embeddings?.data && embeddings.data.length > 0 ? (
-          <EmbeddingsTable data={embeddings.data} />
-        ) : (
-          <Box padding={8} textAlign="center">
-            No embeddings found matching "{search}"
-          </Box>
-        )}
+        {renderEmbeddingsContent()}
       </Layouts.Content>
       <ChatModal />
     </Main>

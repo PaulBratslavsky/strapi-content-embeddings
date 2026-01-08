@@ -185,6 +185,42 @@ const MDXEditorStyles = createGlobalStyle`
     outline: none;
   }
 
+  /* Placeholder positioning - ensure it's at the top */
+  [class*="_contentEditable"] {
+    position: relative;
+  }
+
+  [class*="_contentEditable"][data-placeholder]::before {
+    position: absolute;
+    top: var(--mdx-spacing-3);
+    left: var(--mdx-spacing-3);
+    color: #a5a5ba;
+    pointer-events: none;
+  }
+
+  /* MDXEditor/Lexical placeholder styles */
+  [class*="_placeholder"],
+  [class*="ContentEditable__placeholder"],
+  [class*="editor-placeholder"] {
+    position: absolute !important;
+    top: var(--mdx-spacing-3) !important;
+    left: var(--mdx-spacing-3) !important;
+    color: #a5a5ba;
+    pointer-events: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: none;
+    display: inline-block;
+  }
+
+  /* Editor root wrapper needs relative positioning for placeholder */
+  [class*="_rootContentEditableWrapper"],
+  [class*="_editorWrapper"] {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
   /* Heading styles */
   [class*="_contentEditable"] h1 {
     font-size: 1.75rem;
@@ -319,7 +355,24 @@ const EditorWrapper = styled(Box)<{ $isFocused: boolean }>`
   box-shadow: ${({ $isFocused }) => ($isFocused ? '0 0 0 2px rgba(73, 69, 255, 0.2)' : 'none')};
 `;
 
-export function MarkdownEditor({ content, onChange, height = 300 }: MarkdownEditorProps) {
+// Toolbar contents component defined outside to prevent re-renders
+function ToolbarContents() {
+  return (
+    <>
+      <UndoRedo />
+      <Separator />
+      <BlockTypeSelect />
+      <Separator />
+      <BoldItalicUnderlineToggles />
+      <Separator />
+      <CreateLink />
+      <Separator />
+      <ListsToggle />
+    </>
+  );
+}
+
+export function MarkdownEditor({ content, onChange, height = 300 }: Readonly<MarkdownEditorProps>) {
   const [isFocused, setIsFocused] = useState(false);
 
   return (
@@ -344,19 +397,7 @@ export function MarkdownEditor({ content, onChange, height = 300 }: MarkdownEdit
               linkDialogPlugin(),
               markdownShortcutPlugin(),
               toolbarPlugin({
-                toolbarContents: () => (
-                  <>
-                    <UndoRedo />
-                    <Separator />
-                    <BlockTypeSelect />
-                    <Separator />
-                    <BoldItalicUnderlineToggles />
-                    <Separator />
-                    <CreateLink />
-                    <Separator />
-                    <ListsToggle />
-                  </>
-                ),
+                toolbarContents: ToolbarContents,
               }),
             ]}
           />
