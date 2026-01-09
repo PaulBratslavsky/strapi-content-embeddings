@@ -400,14 +400,14 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   /**
-   * Update embeddings with automatic chunking support
-   * Handles re-chunking when content changes and exceeds chunk size
+   * Update a single chunk's content and embedding
+   * Updates only the specified chunk without affecting other chunks in the group
    */
   async updateChunkedEmbedding(
     id: string,
     data: UpdateEmbeddingData
   ): Promise<ChunkedEmbeddingResult> {
-    const { title, content, metadata, autoChunk } = data.data;
+    const { title, content, metadata } = data.data;
     const config = this.getConfig();
 
     // Find the current entry
@@ -420,80 +420,85 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     const currentMetadata = currentEntry.metadata as Record<string, any> | null;
-    const parentDocumentId = currentMetadata?.parentDocumentId || id;
+    const contentChanged = content !== undefined && content !== currentEntry.content;
 
-    // Determine new content
-    const newContent = content ?? currentEntry.content;
-    const newTitle = title ?? currentMetadata?.originalTitle ?? currentEntry.title;
+    console.log(`[updateChunkedEmbedding] Updating single chunk ${id}, contentChanged: ${contentChanged}`);
 
-    // Check if new content needs chunking
-    const shouldChunk = autoChunk ?? config.autoChunk;
-    const chunkSize = config.chunkSize || 4000;
-    const contentNeedsChunking = shouldChunk && needsChunking(newContent, chunkSize);
+    // Build update data for Strapi
+    const updateData: Record<string, any> = {};
 
-    // Find all related chunks to get original relationship info
-    const existingChunks = await this.findRelatedChunks(id);
-
-    // Extract the original related info from the first chunk (index 0)
-    let originalRelated: { __type: string; id: number } | undefined;
-    const firstChunk = existingChunks.find(
-      (c) => (c.metadata as any)?.chunkIndex === 0 || c.documentId === parentDocumentId
-    );
-    if (firstChunk?.related) {
-      originalRelated = firstChunk.related;
+    if (title !== undefined) {
+      // Update title but preserve [Part X/Y] suffix if present
+      const currentTitle = currentEntry.title || "";
+      const partMatch = currentTitle.match(/\s*\[Part \d+\/\d+\]$/);
+      updateData.title = partMatch ? `${title}${partMatch[0]}` : title;
     }
 
-    // Delete all existing chunks
-    const deletedCount = await this.deleteRelatedChunks(id);
-    console.log(`Deleted ${deletedCount} existing chunk(s) for update`);
+    if (content !== undefined) {
+      // Content should already be preprocessed by updateEmbedding if needed
+      updateData.content = content;
+    }
 
-    // Preserve non-chunk metadata
-    const preservedMetadata = { ...metadata };
-    // Remove chunk-specific fields that will be regenerated
-    delete preservedMetadata?.isChunk;
-    delete preservedMetadata?.chunkIndex;
-    delete preservedMetadata?.totalChunks;
-    delete preservedMetadata?.startOffset;
-    delete preservedMetadata?.endOffset;
-    delete preservedMetadata?.originalTitle;
-    delete preservedMetadata?.parentDocumentId;
-    delete preservedMetadata?.estimatedTokens;
-
-    // Create new embedding(s)
-    if (contentNeedsChunking) {
-      // Create chunked embeddings
-      return await this.createChunkedEmbedding({
-        data: {
-          title: newTitle.replace(/\s*\[Part \d+\/\d+\]$/, ''), // Remove old part suffix
-          content: newContent,
-          collectionType: currentEntry.collectionType || "standalone",
-          fieldName: currentEntry.fieldName || "content",
-          metadata: preservedMetadata,
-          related: originalRelated,
-          autoChunk: true,
-        },
-      });
-    } else {
-      // Create single embedding
-      const entity = await this.createEmbedding({
-        data: {
-          title: newTitle.replace(/\s*\[Part \d+\/\d+\]$/, ''), // Remove old part suffix
-          content: newContent,
-          collectionType: currentEntry.collectionType || "standalone",
-          fieldName: currentEntry.fieldName || "content",
-          metadata: preservedMetadata,
-          related: originalRelated,
-          autoChunk: false,
-        },
-      });
-
-      return {
-        entity,
-        chunks: [entity],
-        totalChunks: 1,
-        wasChunked: false,
+    if (metadata !== undefined) {
+      // Merge with existing metadata, preserving chunk-specific fields
+      updateData.metadata = {
+        ...currentMetadata,
+        ...metadata,
       };
+
+      // Update estimatedTokens if content changed
+      if (contentChanged) {
+        updateData.metadata.estimatedTokens = estimateTokens(updateData.content || currentEntry.content);
+      }
     }
+
+    // Update Strapi entry
+    const updatedEntity = await strapi.documents(CONTENT_TYPE_UID).update({
+      documentId: id,
+      data: updateData,
+    });
+
+    // Update embedding in Neon if content or title changed
+    if (pluginManager.isInitialized() && (contentChanged || title !== undefined)) {
+      try {
+        console.log(`[updateChunkedEmbedding] Updating embedding in Neon for chunk ${id}`);
+
+        // Delete old embedding from vector store
+        await pluginManager.deleteEmbedding(id);
+
+        // Create new embedding with updated content
+        const newContent = updateData.content || currentEntry.content;
+        const result = await pluginManager.createEmbedding({
+          id,
+          title: updatedEntity.title || currentEntry.title,
+          content: newContent,
+          collectionType: currentEntry.collectionType || "standalone",
+          fieldName: currentEntry.fieldName || "content",
+        });
+
+        // Update Strapi with new embedding data
+        await strapi.documents(CONTENT_TYPE_UID).update({
+          documentId: id,
+          data: {
+            embeddingId: result.embeddingId,
+            embedding: result.embedding,
+          } as any,
+        });
+
+        console.log(`[updateChunkedEmbedding] Successfully updated embedding for chunk ${id}`);
+      } catch (error) {
+        console.error(`Failed to update vector store for ${id}:`, error);
+      }
+    }
+
+    // Return this chunk and all related chunks
+    const allChunks = await this.findRelatedChunks(id);
+    return {
+      entity: updatedEntity,
+      chunks: allChunks,
+      totalChunks: allChunks.length,
+      wasChunked: allChunks.length > 1,
+    };
   },
 
   async updateEmbedding(id: string, data: UpdateEmbeddingData) {

@@ -16,6 +16,8 @@ import {
   TextInput,
   Loader,
   Flex,
+  SingleSelect,
+  SingleSelectOption,
 } from "@strapi/design-system";
 import { Plus, Eye } from "@strapi/icons";
 import { PLUGIN_ID } from "../../pluginId";
@@ -35,6 +37,13 @@ interface ExistingEmbedding {
   content?: string;
 }
 
+interface TextFieldOption {
+  name: string;
+  label: string;
+  value: string;
+  charCount: number;
+}
+
 export function EmbeddingsModal() {
   const { post, get } = useFetchClient();
   const { toggleNotification } = useNotification();
@@ -50,6 +59,7 @@ export function EmbeddingsModal() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [fieldName, setFieldName] = useState("");
+  const [availableFields, setAvailableFields] = useState<TextFieldOption[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCheckingExisting, setIsCheckingExisting] = useState(true);
   const [existingEmbedding, setExistingEmbedding] = useState<ExistingEmbedding | null>(null);
@@ -93,47 +103,130 @@ export function EmbeddingsModal() {
     checkExistingEmbedding();
   }, [id, slug, get]);
 
-  // Extract text content from form values
-  const extractContentFromForm = useCallback(() => {
-    if (!modifiedValues) return "";
+  // Extract text value from a field (handles strings, blocks, and dynamic zones)
+  const extractTextFromField = useCallback((value: any, depth: number = 0): string => {
+    if (!value || depth > 5) return ""; // Prevent infinite recursion
 
-    // Look for common text field names
-    const textFieldNames = ["content", "description", "body", "text", "richtext", "markdown"];
+    // Handle string values
+    if (typeof value === "string") {
+      return value.trim();
+    }
 
-    for (const name of textFieldNames) {
-      const value = modifiedValues[name];
-      if (value) {
-        // Handle different content formats
-        if (typeof value === "string" && value.trim()) {
-          setFieldName(name);
-          return value;
-        } else if (Array.isArray(value)) {
-          // Blocks format - extract text
-          const text = value
-            .map((block: any) => {
-              if (block.children) {
-                return block.children.map((child: any) => child.text || "").join("");
-              }
-              return "";
-            })
-            .join("\n\n");
-          if (text.trim()) {
-            setFieldName(name);
-            return text;
+    // Handle arrays (could be blocks, dynamic zones, or repeatable components)
+    if (Array.isArray(value)) {
+      const texts: string[] = [];
+
+      for (const item of value) {
+        // Check if it's a dynamic zone component (has __component property)
+        if (item && typeof item === "object" && item.__component) {
+          // Extract text from all fields in the component
+          for (const [key, fieldValue] of Object.entries(item)) {
+            if (key === "__component" || key === "id") continue;
+            const extracted = extractTextFromField(fieldValue, depth + 1);
+            if (extracted) texts.push(extracted);
           }
         }
+        // Check if it's a blocks format item (rich text)
+        else if (item && item.children) {
+          const blockText = item.children
+            .map((child: any) => child.text || "")
+            .join("");
+          if (blockText) texts.push(blockText);
+        }
+        // Recursively handle nested arrays/objects
+        else if (item && typeof item === "object") {
+          const extracted = extractTextFromField(item, depth + 1);
+          if (extracted) texts.push(extracted);
+        }
+      }
+
+      return texts.join("\n\n").trim();
+    }
+
+    // Handle objects (could be a component or relation)
+    if (typeof value === "object") {
+      const texts: string[] = [];
+
+      for (const [key, fieldValue] of Object.entries(value)) {
+        // Skip metadata fields
+        if (["id", "__component", "documentId", "createdAt", "updatedAt"].includes(key)) continue;
+        const extracted = extractTextFromField(fieldValue, depth + 1);
+        if (extracted) texts.push(extracted);
+      }
+
+      return texts.join("\n\n").trim();
+    }
+
+    return "";
+  }, []);
+
+  // Check if a value is a dynamic zone
+  const isDynamicZone = (value: any): boolean => {
+    return Array.isArray(value) && value.length > 0 && value[0]?.__component;
+  };
+
+  // Detect all available text fields from form values
+  const detectTextFields = useCallback((): TextFieldOption[] => {
+    if (!modifiedValues) return [];
+
+    const fields: TextFieldOption[] = [];
+
+    // Check all fields in form values
+    for (const [name, value] of Object.entries(modifiedValues)) {
+      // Skip non-content fields
+      if (["id", "documentId", "createdAt", "updatedAt", "publishedAt", "locale", "localizations"].includes(name)) {
+        continue;
+      }
+
+      const textValue = extractTextFromField(value);
+      if (textValue && textValue.length > 0) {
+        // Create a readable label from field name
+        let label = name
+          .replace(/([A-Z])/g, " $1")
+          .replace(/^./, (str) => str.toUpperCase())
+          .trim();
+
+        // Add indicator for dynamic zones
+        if (isDynamicZone(value)) {
+          const componentCount = (value as any[]).length;
+          label += ` (${componentCount} component${componentCount > 1 ? "s" : ""})`;
+        }
+
+        fields.push({
+          name,
+          label,
+          value: textValue,
+          charCount: textValue.length,
+        });
       }
     }
-    return "";
-  }, [modifiedValues]);
 
-  // Find text content from form values
+    // Sort by character count (longest first) to prioritize main content
+    fields.sort((a, b) => b.charCount - a.charCount);
+
+    return fields;
+  }, [modifiedValues, extractTextFromField]);
+
+  // Update available fields when form values change
   useEffect(() => {
-    const formContent = extractContentFromForm();
-    if (formContent) {
-      setContent(formContent);
+    const fields = detectTextFields();
+    setAvailableFields(fields);
+
+    // Auto-select first field if none selected
+    if (fields.length > 0 && !fieldName) {
+      setFieldName(fields[0].name);
+      setContent(fields[0].value);
     }
-  }, [extractContentFromForm]);
+  }, [detectTextFields, fieldName]);
+
+  // Handle field selection change
+  const handleFieldChange = (selectedFieldName: string) => {
+    setFieldName(selectedFieldName);
+    const selectedField = availableFields.find(f => f.name === selectedFieldName);
+    if (selectedField) {
+      setContent(selectedField.value);
+    }
+  };
 
   const contentLength = content.length;
   const willChunk = contentLength > CHUNK_SIZE;
@@ -156,10 +249,12 @@ export function EmbeddingsModal() {
 
   function handleOpenCreate() {
     setTitle("");
-    // Refresh content from current form values
-    const formContent = extractContentFromForm();
-    if (formContent) {
-      setContent(formContent);
+    // Refresh available fields and select first one
+    const fields = detectTextFields();
+    setAvailableFields(fields);
+    if (fields.length > 0) {
+      setFieldName(fields[0].name);
+      setContent(fields[0].value);
     }
     setIsVisible(true);
   }
@@ -283,13 +378,6 @@ export function EmbeddingsModal() {
           </Modal.Header>
           <Modal.Body>
             <Box>
-              <StyledTypography variant="omega" textColor="neutral600">
-                Content: {contentLength} characters
-                {willChunk && (
-                  <Typography textColor="primary600"> (will create ~{estimatedChunks} embeddings)</Typography>
-                )}
-              </StyledTypography>
-
               <Box marginBottom={4}>
                 <Field.Root>
                   <Field.Label>Title</Field.Label>
@@ -303,13 +391,38 @@ export function EmbeddingsModal() {
                 </Field.Root>
               </Box>
 
+              {availableFields.length > 0 && (
+                <Box marginBottom={4}>
+                  <Field.Root>
+                    <Field.Label>Source Field</Field.Label>
+                    <Field.Hint>Select which field to use for the embedding content</Field.Hint>
+                  </Field.Root>
+                  <SingleSelect
+                    value={fieldName}
+                    onChange={(value: string) => handleFieldChange(value)}
+                    placeholder="Select a field"
+                  >
+                    {availableFields.map((field) => (
+                      <SingleSelectOption key={field.name} value={field.name}>
+                        {field.label} ({field.charCount.toLocaleString()} chars)
+                      </SingleSelectOption>
+                    ))}
+                  </SingleSelect>
+                </Box>
+              )}
+
               <Box marginBottom={4}>
-                <Field.Root>
-                  <Field.Label>Content</Field.Label>
-                  <Field.Hint>
-                    {fieldName ? `From field: ${fieldName}` : "Enter content manually"}
-                  </Field.Hint>
-                </Field.Root>
+                <Flex justifyContent="space-between" alignItems="center">
+                  <Field.Root>
+                    <Field.Label>Content Preview</Field.Label>
+                  </Field.Root>
+                  <Typography variant="pi" textColor="neutral600">
+                    {contentLength.toLocaleString()} characters
+                    {willChunk && (
+                      <Typography textColor="primary600"> (~{estimatedChunks} chunks)</Typography>
+                    )}
+                  </Typography>
+                </Flex>
                 <MarkdownEditor
                   content={content}
                   onChange={setContent}
