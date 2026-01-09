@@ -7,6 +7,7 @@ const CONTENT_TYPE_UID = `plugin::${PLUGIN_ID}.embedding` as const;
 export interface SyncResult {
   success: boolean;
   timestamp: string;
+  dryRun: boolean;
   neonCount: number;
   strapiCount: number;
   actions: {
@@ -73,6 +74,7 @@ const sync = ({ strapi }: { strapi: Core.Strapi }) => ({
     const result: SyncResult = {
       success: false,
       timestamp: new Date().toISOString(),
+      dryRun,
       neonCount: 0,
       strapiCount: 0,
       actions: {

@@ -2,6 +2,7 @@ import { PLUGIN_ID } from "../pluginId";
 import qs from "qs";
 
 const API_BASE = `/${PLUGIN_ID}/embeddings`;
+const SYNC_BASE = `/${PLUGIN_ID}`;
 
 interface CreateEmbeddingData {
   title: string;
@@ -54,6 +55,64 @@ export const embeddingsApi = {
     const response = await fetchClient.get(
       `${API_BASE}/embeddings-query?${qs.stringify({ query })}`
     );
+    return response.data;
+  },
+};
+
+export interface SyncStatus {
+  neonCount: number;
+  strapiCount: number;
+  inSync: boolean;
+  missingInStrapi: number;
+  missingInNeon: number;
+  contentDifferences: number;
+}
+
+export interface SyncResult {
+  success: boolean;
+  timestamp: string;
+  dryRun?: boolean;
+  neonCount: number;
+  strapiCount: number;
+  actions: {
+    created: number;
+    updated: number;
+    orphansRemoved: number;
+  };
+  details: {
+    created: string[];
+    updated: string[];
+    orphansRemoved: string[];
+  };
+  errors: string[];
+}
+
+export interface RecreateResult {
+  success: boolean;
+  message: string;
+  totalProcessed: number;
+  created: number;
+  failed: number;
+  errors: string[];
+}
+
+export const syncApi = {
+  getStatus: async (fetchClient: { get: Function }): Promise<SyncStatus> => {
+    const response = await fetchClient.get(`${SYNC_BASE}/sync/status`);
+    return response.data;
+  },
+
+  syncFromNeon: async (
+    fetchClient: { post: Function },
+    options?: { removeOrphans?: boolean; dryRun?: boolean }
+  ): Promise<SyncResult> => {
+    const queryString = options ? `?${qs.stringify(options)}` : "";
+    const response = await fetchClient.post(`${SYNC_BASE}/sync${queryString}`);
+    return response.data;
+  },
+
+  recreateAll: async (fetchClient: { post: Function }): Promise<RecreateResult> => {
+    const response = await fetchClient.post(`${SYNC_BASE}/recreate`);
     return response.data;
   },
 };

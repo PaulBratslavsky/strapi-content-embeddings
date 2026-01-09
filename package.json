@@ -1,6 +1,6 @@
 {
   "name": "strapi-content-embeddings",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Strapi v5 plugin for vector embeddings with OpenAI and Neon PostgreSQL. Enables semantic search, RAG chat, and MCP (Model Context Protocol) integration.",
   "keywords": [
     "strapi",
@@ -65,8 +65,10 @@
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@strapi/design-system": "^2.0.0-rc.12",
     "@strapi/icons": "^2.0.0-rc.12",
+    "html-to-text": "^9.0.5",
     "langchain": "^1.2.4",
     "pg": "^8.13.1",
+    "remove-markdown": "^0.5.5",
     "qs": "^6.13.1",
     "react-intl": "^6.8.4",
     "react-markdown": "^10.1.0",

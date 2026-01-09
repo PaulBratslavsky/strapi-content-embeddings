@@ -6,6 +6,7 @@ import {
   needsChunking,
   estimateTokens,
 } from "../utils/chunking";
+import { preprocessContent } from "../utils/preprocessing";
 import type { PluginConfigSchema } from "../config";
 
 const PLUGIN_ID = "strapi-content-embeddings";
@@ -58,6 +59,7 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
       chunkSize: config.chunkSize || 4000,
       chunkOverlap: config.chunkOverlap || 200,
       autoChunk: config.autoChunk || false,
+      preprocessContent: config.preprocessContent !== false, // Default true
       ...config,
     };
   },
@@ -66,8 +68,13 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
    * Create a single embedding (no chunking)
    */
   async createEmbedding(data: CreateEmbeddingData) {
-    const { title, content, collectionType, fieldName, metadata, related, autoChunk } = data.data;
+    const { title, content: rawContent, collectionType, fieldName, metadata, related, autoChunk } = data.data;
     const config = this.getConfig();
+
+    // Preprocess content (strip HTML/Markdown) if enabled
+    const content = config.preprocessContent
+      ? preprocessContent(rawContent)
+      : rawContent;
 
     // Check if chunking should be applied
     const shouldChunk = autoChunk ?? config.autoChunk;
@@ -136,8 +143,13 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
    * Creates multiple embedding entities, one per chunk
    */
   async createChunkedEmbedding(data: CreateEmbeddingData): Promise<ChunkedEmbeddingResult> {
-    const { title, content, collectionType, fieldName, metadata, related } = data.data;
+    const { title, content: rawContent, collectionType, fieldName, metadata, related } = data.data;
     const config = this.getConfig();
+
+    // Preprocess content (strip HTML/Markdown) if enabled
+    const content = config.preprocessContent
+      ? preprocessContent(rawContent)
+      : rawContent;
 
     const chunkSize = config.chunkSize || 4000;
     const chunkOverlap = config.chunkOverlap || 200;
@@ -485,8 +497,13 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
   },
 
   async updateEmbedding(id: string, data: UpdateEmbeddingData) {
-    const { title, content, metadata, autoChunk } = data.data;
+    const { title, content: rawContent, metadata, autoChunk } = data.data;
     const config = this.getConfig();
+
+    // Preprocess content if provided and preprocessing is enabled
+    const content = rawContent !== undefined && config.preprocessContent
+      ? preprocessContent(rawContent)
+      : rawContent;
 
     const currentEntry = await strapi.documents(CONTENT_TYPE_UID).findOne({
       documentId: id,
@@ -511,7 +528,10 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
     // 1. The entry is currently part of a chunk group, OR
     // 2. The new content needs chunking
     if (hasRelatedChunks || contentNeedsChunking) {
-      const result = await this.updateChunkedEmbedding(id, data);
+      // Pass preprocessed content to avoid double-preprocessing
+      const result = await this.updateChunkedEmbedding(id, {
+        data: { ...data.data, content },
+      });
       return result.entity;
     }
 
@@ -533,7 +553,7 @@ const embeddings = ({ strapi }: { strapi: Core.Strapi }) => ({
         // Delete old embedding from vector store
         await pluginManager.deleteEmbedding(id);
 
-        // Create new embedding with updated content
+        // Create new embedding with updated content (already preprocessed)
         const result = await pluginManager.createEmbedding({
           id,
           title: title || currentEntry.title,

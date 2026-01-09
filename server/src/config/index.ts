@@ -17,6 +17,8 @@ export interface PluginConfigSchema {
   chunkOverlap?: number;
   /** Automatically chunk content that exceeds chunkSize (default: false) */
   autoChunk?: boolean;
+  /** Preprocess content before embedding - strips HTML/Markdown (default: true) */
+  preprocessContent?: boolean;
 }
 
 export default {
@@ -27,6 +29,7 @@ export default {
     chunkSize: 4000,
     chunkOverlap: 200,
     autoChunk: false,
+    preprocessContent: true,
   },
   validator(config: PluginConfigSchema) {
     if (!config.openAIApiKey) {

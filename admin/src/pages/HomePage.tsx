@@ -13,7 +13,7 @@ import {
   PageLink,
   NextLink,
 } from '@strapi/design-system';
-import { Plus, Search } from '@strapi/icons';
+import { Plus, Search, ArrowClockwise } from '@strapi/icons';
 import { useFetchClient, Layouts } from '@strapi/strapi/admin';
 import qs from 'qs';
 
@@ -21,6 +21,7 @@ import { PLUGIN_ID } from '../pluginId';
 import { EmptyState } from '../components/custom/EmptyState';
 import { EmbeddingsTable } from '../components/custom/EmbeddingsTable';
 import { ChatModal } from '../components/custom/ChatModal';
+import { SyncModal } from '../components/custom/SyncModal';
 
 interface Embedding {
   id: number;
@@ -57,6 +58,7 @@ export function HomePage() {
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   const totalPages = embeddings ? Math.ceil(embeddings.totalCount / PAGE_SIZE) : 0;
 
@@ -106,16 +108,41 @@ export function HomePage() {
     navigate(`/plugins/${PLUGIN_ID}/embeddings`);
   };
 
+  const handleSyncComplete = () => {
+    // Refresh the embeddings list after sync
+    fetchData(search, currentPage);
+  };
+
+  const headerActions = (
+    <Flex gap={2}>
+      <Button variant="secondary" startIcon={<ArrowClockwise />} onClick={() => setIsSyncModalOpen(true)}>
+        Sync
+      </Button>
+      <Button startIcon={<Plus />} onClick={handleCreateNew}>
+        Create new embedding
+      </Button>
+    </Flex>
+  );
+
   if (isLoading && !embeddings) {
     return (
       <Main>
-        <Layouts.Header title={'Content Embeddings'} subtitle={'Manage your content embeddings'} />
+        <Layouts.Header
+          title={'Content Embeddings'}
+          subtitle={'Manage your content embeddings'}
+          primaryAction={headerActions}
+        />
         <Layouts.Content>
           <Flex justifyContent="center" padding={8}>
             <Loader>Loading...</Loader>
           </Flex>
         </Layouts.Content>
         <ChatModal />
+        <SyncModal
+          isOpen={isSyncModalOpen}
+          onClose={() => setIsSyncModalOpen(false)}
+          onSyncComplete={handleSyncComplete}
+        />
       </Main>
     );
   }
@@ -123,11 +150,20 @@ export function HomePage() {
   if (embeddings?.totalCount === 0 && !search) {
     return (
       <Main>
-        <Layouts.Header title={'Content Embeddings'} subtitle={'Manage your content embeddings'} />
+        <Layouts.Header
+          title={'Content Embeddings'}
+          subtitle={'Manage your content embeddings'}
+          primaryAction={headerActions}
+        />
         <Layouts.Content>
           <EmptyState />
         </Layouts.Content>
         <ChatModal />
+        <SyncModal
+          isOpen={isSyncModalOpen}
+          onClose={() => setIsSyncModalOpen(false)}
+          onSyncComplete={handleSyncComplete}
+        />
       </Main>
     );
   }
@@ -221,11 +257,7 @@ export function HomePage() {
       <Layouts.Header
         title={'Content Embeddings'}
         subtitle={`${embeddings?.totalCount || 0} embeddings total`}
-        primaryAction={
-          <Button startIcon={<Plus />} onClick={handleCreateNew}>
-            Create new embedding
-          </Button>
-        }
+        primaryAction={headerActions}
       />
       <Layouts.Content>
         <Box paddingBottom={4}>
@@ -241,6 +273,11 @@ export function HomePage() {
         {renderPagination()}
       </Layouts.Content>
       <ChatModal />
+      <SyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        onSyncComplete={handleSyncComplete}
+      />
     </Main>
   );
 }

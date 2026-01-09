@@ -115,4 +115,30 @@ export default [
       },
     ]
   },
+},
+{
+  method: 'GET',
+  path: '/sync/status',
+  handler: 'controller.getSyncStatus',
+  config: {
+    policies: [
+      {
+        name: 'admin::hasPermissions',
+        config: { actions: ['plugin::strapi-content-embeddings.read'] }
+      },
+    ]
+  },
+},
+{
+  method: 'POST',
+  path: '/sync',
+  handler: 'controller.syncFromNeon',
+  config: {
+    policies: [
+      {
+        name: 'admin::hasPermissions',
+        config: { actions: ['plugin::strapi-content-embeddings.update'] }
+      },
+    ]
+  },
 },]
