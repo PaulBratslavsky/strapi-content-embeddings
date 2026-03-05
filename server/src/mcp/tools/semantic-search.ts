@@ -1,15 +1,15 @@
 /**
- * Semantic Search Tool
+ * Semantic Search Tool — MCP Wrapper
  *
- * Performs vector similarity search to find relevant content.
+ * Thin MCP adapter that delegates to the canonical tool implementation.
  */
 
 import type { Core } from '@strapi/strapi';
+import { semanticSearchTool } from '../../tools/semantic-search';
 
-export const semanticSearchTool = {
+export const semanticSearchMcpTool = {
   name: 'semantic_search',
-  description:
-    'TRIGGER: Use when user types "/rag" or asks to search embeddings/content. Search for semantically similar content using vector embeddings. Returns the most relevant documents matching your query based on meaning, not just keywords.',
+  description: semanticSearchTool.description,
   inputSchema: {
     type: 'object',
     properties: {
@@ -31,47 +31,13 @@ export async function handleSemanticSearch(
   strapi: Core.Strapi,
   args: { query: string; limit?: number }
 ) {
-  const { query, limit = 5 } = args;
-  const maxLimit = Math.min(limit, 20);
-
-  try {
-    // Get the plugin manager for vector operations
-    const pluginManager = (strapi as any).contentEmbeddingsManager;
-
-    if (!pluginManager) {
-      throw new Error('Content embeddings plugin not initialized');
-    }
-
-    // Perform similarity search
-    const results = await pluginManager.similaritySearch(query, maxLimit);
-
-    // Format results
-    const formattedResults = results.map((doc: any, index: number) => ({
-      rank: index + 1,
-      content: doc.pageContent,
-      metadata: doc.metadata,
-      score: doc.score || null,
-    }));
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              query,
-              resultCount: formattedResults.length,
-              results: formattedResults,
-            },
-            null,
-            2
-          ),
-        },
-      ],
-    };
-  } catch (error) {
-    throw new Error(
-      `Semantic search failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const result = await semanticSearchTool.execute(args, strapi);
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
+      },
+    ],
+  };
 }

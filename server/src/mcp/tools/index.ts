@@ -2,25 +2,26 @@
  * MCP Tools for Content Embeddings
  *
  * Exposes vector search, RAG queries, and embedding management tools.
+ * Each handler is a thin wrapper around canonical tool definitions in ../../tools.
  */
 
 import type { Core } from '@strapi/strapi';
 import { validateToolInput } from '../schemas';
 
-// Import tool handlers
-import { semanticSearchTool, handleSemanticSearch } from './semantic-search';
-import { ragQueryTool, handleRagQuery } from './rag-query';
-import { listEmbeddingsTool, handleListEmbeddings } from './list-embeddings';
-import { getEmbeddingTool, handleGetEmbedding } from './get-embedding';
-import { createEmbeddingTool, handleCreateEmbedding } from './create-embedding';
+// Import MCP tool definitions and handlers
+import { semanticSearchMcpTool, handleSemanticSearch } from './semantic-search';
+import { ragQueryMcpTool, handleRagQuery } from './rag-query';
+import { listEmbeddingsMcpTool, handleListEmbeddings } from './list-embeddings';
+import { getEmbeddingMcpTool, handleGetEmbedding } from './get-embedding';
+import { createEmbeddingMcpTool, handleCreateEmbedding } from './create-embedding';
 
-// Export all tool definitions
+// Export all MCP tool definitions (JSON Schema format for MCP ListTools)
 export const tools = [
-  semanticSearchTool,
-  ragQueryTool,
-  listEmbeddingsTool,
-  getEmbeddingTool,
-  createEmbeddingTool,
+  semanticSearchMcpTool,
+  ragQueryMcpTool,
+  listEmbeddingsMcpTool,
+  getEmbeddingMcpTool,
+  createEmbeddingMcpTool,
 ];
 
 // Tool handler registry

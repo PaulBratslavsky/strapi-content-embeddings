@@ -1,15 +1,15 @@
 /**
- * Get Embedding Tool
+ * Get Embedding Tool — MCP Wrapper
  *
- * Retrieves a single embedding by ID.
+ * Thin MCP adapter that delegates to the canonical tool implementation.
  */
 
 import type { Core } from '@strapi/strapi';
+import { getEmbeddingTool } from '../../tools/get-embedding';
 
-export const getEmbeddingTool = {
+export const getEmbeddingMcpTool = {
   name: 'get_embedding',
-  description:
-    'Get a specific embedding by its document ID. Returns the full content and metadata.',
+  description: getEmbeddingTool.description,
   inputSchema: {
     type: 'object',
     properties: {
@@ -31,59 +31,13 @@ export async function handleGetEmbedding(
   strapi: Core.Strapi,
   args: { documentId: string; includeContent?: boolean }
 ) {
-  const { documentId, includeContent = true } = args;
-
-  try {
-    // Get the embeddings service
-    const embeddingsService = strapi
-      .plugin('strapi-content-embeddings')
-      .service('embeddings');
-
-    // Fetch the embedding
-    const embedding = await embeddingsService.getEmbedding(documentId);
-
-    if (!embedding) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              error: true,
-              message: `Embedding not found with documentId: ${documentId}`,
-            }),
-          },
-        ],
-      };
-    }
-
-    // Format response
-    const result: any = {
-      id: embedding.id,
-      documentId: embedding.documentId,
-      title: embedding.title,
-      collectionType: embedding.collectionType,
-      fieldName: embedding.fieldName,
-      metadata: embedding.metadata,
-      embeddingId: embedding.embeddingId,
-      createdAt: embedding.createdAt,
-      updatedAt: embedding.updatedAt,
-    };
-
-    if (includeContent) {
-      result.content = embedding.content;
-    }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to get embedding: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const result = await getEmbeddingTool.execute(args, strapi);
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
+      },
+    ],
+  };
 }

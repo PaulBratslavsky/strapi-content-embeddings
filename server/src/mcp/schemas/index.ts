@@ -34,6 +34,8 @@ export const CreateEmbeddingSchema = z.object({
   title: z.string().min(1, 'Title is required'),
   content: z.string().min(1, 'Content is required'),
   metadata: z.record(z.any()).optional(),
+  autoChunk: z.boolean().optional()
+    .describe('Automatically split large content into chunks'),
 });
 
 // Schema registry

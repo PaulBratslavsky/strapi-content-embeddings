@@ -1,16 +1,15 @@
 /**
- * Create Embedding Tool
+ * Create Embedding Tool — MCP Wrapper
  *
- * Creates a new embedding from text content.
- * Supports automatic chunking for large content.
+ * Thin MCP adapter that delegates to the canonical tool implementation.
  */
 
 import type { Core } from '@strapi/strapi';
+import { createEmbeddingTool } from '../../tools/create-embedding';
 
-export const createEmbeddingTool = {
+export const createEmbeddingMcpTool = {
   name: 'create_embedding',
-  description:
-    'Create a new embedding from text content. The content will be vectorized and stored for semantic search. For large content (over 4000 characters), enable autoChunk to automatically split into multiple embeddings.',
+  description: createEmbeddingTool.description,
   inputSchema: {
     type: 'object',
     properties: {
@@ -45,102 +44,13 @@ export async function handleCreateEmbedding(
     autoChunk?: boolean;
   }
 ) {
-  const { title, content, metadata, autoChunk } = args;
-
-  try {
-    // Get the embeddings service
-    const embeddingsService = strapi
-      .plugin('strapi-content-embeddings')
-      .service('embeddings');
-
-    // Check if we should use chunked embedding
-    if (autoChunk) {
-      const result = await embeddingsService.createChunkedEmbedding({
-        data: {
-          title,
-          content,
-          metadata: metadata || {},
-          collectionType: 'standalone',
-          fieldName: 'content',
-        },
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(
-              {
-                success: true,
-                message: result.wasChunked
-                  ? `Content chunked into ${result.totalChunks} embeddings`
-                  : 'Embedding created successfully (no chunking needed)',
-                wasChunked: result.wasChunked,
-                totalChunks: result.totalChunks,
-                primaryEmbedding: {
-                  id: result.entity.id,
-                  documentId: result.entity.documentId,
-                  title: result.entity.title,
-                  embeddingId: result.entity.embeddingId,
-                },
-                chunks: result.chunks.map((chunk: any) => ({
-                  documentId: chunk.documentId,
-                  title: chunk.title,
-                  contentLength: chunk.content?.length || 0,
-                })),
-                contentLength: content.length,
-                estimatedTokens: Math.ceil(content.length / 4),
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-
-    // Create single embedding (original behavior)
-    const embedding = await embeddingsService.createEmbedding({
-      data: {
-        title,
-        content,
-        metadata: metadata || {},
-        collectionType: 'standalone',
-        fieldName: 'content',
+  const result = await createEmbeddingTool.execute(args, strapi);
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
       },
-    });
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              success: true,
-              message: 'Embedding created successfully',
-              embedding: {
-                id: embedding.id,
-                documentId: embedding.documentId,
-                title: embedding.title,
-                embeddingId: embedding.embeddingId,
-                contentLength: content.length,
-                metadata: embedding.metadata,
-                createdAt: embedding.createdAt,
-              },
-              hint:
-                content.length > 4000
-                  ? 'Content is large. Consider using autoChunk: true for better search results.'
-                  : undefined,
-            },
-            null,
-            2
-          ),
-        },
-      ],
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to create embedding: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+    ],
+  };
 }

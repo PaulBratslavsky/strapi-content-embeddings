@@ -1,15 +1,15 @@
 /**
- * RAG Query Tool
+ * RAG Query Tool — MCP Wrapper
  *
- * Performs Retrieval-Augmented Generation to answer questions using embedded content.
+ * Thin MCP adapter that delegates to the canonical tool implementation.
  */
 
 import type { Core } from '@strapi/strapi';
+import { ragQueryTool } from '../../tools/rag-query';
 
-export const ragQueryTool = {
+export const ragQueryMcpTool = {
   name: 'rag_query',
-  description:
-    'TRIGGER: Use when user types "/rag" followed by a question. Ask a question and get an AI-generated answer based on your embedded content. Uses RAG (Retrieval-Augmented Generation) to find relevant documents and generate a contextual response. This is the PRIMARY tool for /rag queries.',
+  description: ragQueryTool.description,
   inputSchema: {
     type: 'object',
     properties: {
@@ -31,43 +31,13 @@ export async function handleRagQuery(
   strapi: Core.Strapi,
   args: { query: string; includeSourceDocuments?: boolean }
 ) {
-  const { query, includeSourceDocuments = true } = args;
-
-  try {
-    // Get the embeddings service
-    const embeddingsService = strapi
-      .plugin('strapi-content-embeddings')
-      .service('embeddings');
-
-    // Perform RAG query
-    const result = await embeddingsService.queryEmbeddings(query);
-
-    // Format response
-    const response: any = {
-      query,
-      answer: result.text,
-    };
-
-    if (includeSourceDocuments && result.sourceDocuments) {
-      response.sourceDocuments = result.sourceDocuments.map((doc: any, index: number) => ({
-        rank: index + 1,
-        content: doc.pageContent?.substring(0, 500) + (doc.pageContent?.length > 500 ? '...' : ''),
-        metadata: doc.metadata,
-      }));
-      response.sourceCount = result.sourceDocuments.length;
-    }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(response, null, 2),
-        },
-      ],
-    };
-  } catch (error) {
-    throw new Error(
-      `RAG query failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  const result = await ragQueryTool.execute(args, strapi);
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
+      },
+    ],
+  };
 }
